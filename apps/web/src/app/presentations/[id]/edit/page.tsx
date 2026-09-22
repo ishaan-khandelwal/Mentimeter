@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 
@@ -90,20 +90,11 @@ export default function PresentationEditorPage() {
   }, [loadData]);
 
   const activeSlide = slides[activeSlideIndex] || null;
-
-  // Update active slide field
-  const updateActiveSlide = (fields: Partial<SlideData>) => {
-    if (!activeSlide) return;
-    setSlides((prev) => {
-      const copy = [...prev];
-      copy[activeSlideIndex] = { ...copy[activeSlideIndex], ...fields };
-      return copy;
-    });
-    setSaveStatus('idle');
-  };
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Save current slide to database
   const saveSlide = async (slide: SlideData) => {
+    if (!slide?._id) return;
     setSaving(true);
     setSaveStatus('saving');
     try {
@@ -119,13 +110,50 @@ export default function PresentationEditorPage() {
       });
       if (res.ok) {
         setSaveStatus('saved');
-        setTimeout(() => setSaveStatus('idle'), 2000);
+        setTimeout(() => setSaveStatus('idle'), 2500);
+      } else {
+        setSaveStatus('idle');
       }
     } catch (err) {
       console.error('Save failed:', err);
+      setSaveStatus('idle');
     } finally {
       setSaving(false);
     }
+  };
+
+  // Debounced auto-save (triggers 600ms after user stops typing)
+  const debouncedSave = useCallback((slide: SlideData) => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    setSaveStatus('saving');
+    saveTimeoutRef.current = setTimeout(() => {
+      saveSlide(slide);
+    }, 600);
+  }, []);
+
+  // Update active slide field with automatic background save
+  const updateActiveSlide = (fields: Partial<SlideData>) => {
+    if (!activeSlide) return;
+    const updatedSlide = { ...activeSlide, ...fields };
+    setSlides((prev) => {
+      const copy = [...prev];
+      copy[activeSlideIndex] = updatedSlide;
+      return copy;
+    });
+    debouncedSave(updatedSlide);
+  };
+
+  // Ensure latest changes are saved before opening Present Live
+  const handlePresentLive = async () => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    if (activeSlide) {
+      await saveSlide(activeSlide);
+    }
+    router.push(`/present/${id}`);
   };
 
   // Add new slide
@@ -366,7 +394,8 @@ export default function PresentationEditorPage() {
             <button
               onClick={() => saveSlide(activeSlide)}
               disabled={saving}
-              className="btn btn--ghost btn--sm"
+              className={`btn btn--sm ${saveStatus === 'saved' ? 'btn--ghost' : 'btn--secondary'}`}
+              style={{ minWidth: '110px' }}
             >
               {saveStatus === 'saving'
                 ? '💾 Saving...'
@@ -376,9 +405,9 @@ export default function PresentationEditorPage() {
             </button>
           )}
 
-          <Link href={`/present/${id}`} className="btn btn--primary btn--sm">
+          <button onClick={handlePresentLive} className="btn btn--primary btn--sm">
             ▶ Present Live
-          </Link>
+          </button>
         </div>
       </div>
 
@@ -429,7 +458,13 @@ export default function PresentationEditorPage() {
             return (
               <div
                 key={s._id}
-                onClick={() => setActiveSlideIndex(index)}
+                onClick={() => {
+                  if (activeSlide && saveTimeoutRef.current) {
+                    clearTimeout(saveTimeoutRef.current);
+                    saveSlide(activeSlide);
+                  }
+                  setActiveSlideIndex(index);
+                }}
                 className={`slide-list-item ${isActive ? 'slide-list-item--active' : ''}`}
                 style={{
                   display: 'flex',
