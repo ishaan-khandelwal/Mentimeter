@@ -1,0 +1,110 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  passwordHash  String
+  name          String?
+  plan          String         @default("free")
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  presentations Presentation[]
+
+  @@map("users")
+}
+
+model Presentation {
+  id        String      @id @default(cuid())
+  title     String
+  joinCode  String      @unique
+  ownerId   String
+  owner     User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  status    String      @default("draft") // "draft" | "live" | "ended"
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  slides    Slide[]
+  sessions  Session[]
+  responses Response[]
+  analytics Analytics[]
+
+  @@index([ownerId])
+  @@index([joinCode])
+  @@map("presentations")
+}
+
+model Slide {
+  id             String       @id @default(cuid())
+  presentationId String
+  presentation   Presentation @relation(fields: [presentationId], references: [id], onDelete: Cascade)
+  order          Int
+  type           String // "multiple_choice" | "word_cloud" | "open_text" | "rating_scale" | "ranking" | "qa"
+  question       String
+  options        Json? // array of strings
+  config         Json? // custom configuration options
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  responses      Response[]
+  sessions       Session[]
+
+  @@index([presentationId, order])
+  @@map("slides")
+}
+
+model Session {
+  id             String       @id @default(cuid())
+  presentationId String
+  presentation   Presentation @relation(fields: [presentationId], references: [id], onDelete: Cascade)
+  currentSlideId String?
+  currentSlide   Slide?       @relation(fields: [currentSlideId], references: [id], onDelete: SetNull)
+  status         String       @default("active") // "active" | "ended"
+  votingLocked   Boolean      @default(false)
+  startedAt      DateTime     @default(now())
+  endedAt        DateTime?
+  responses      Response[]
+  analytics      Analytics[]
+
+  @@index([presentationId, status])
+  @@map("sessions")
+}
+
+model Response {
+  id               String       @id @default(cuid())
+  slideId          String
+  slide            Slide        @relation(fields: [slideId], references: [id], onDelete: Cascade)
+  sessionId        String
+  session          Session      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  presentationId   String
+  presentation     Presentation @relation(fields: [presentationId], references: [id], onDelete: Cascade)
+  value            Json
+  participantToken String // sha256 hash of participant token
+  createdAt        DateTime     @default(now())
+
+  @@unique([slideId, participantToken])
+  @@index([sessionId])
+  @@index([presentationId])
+  @@map("responses")
+}
+
+model Analytics {
+  id                  String       @id @default(cuid())
+  presentationId      String
+  presentation        Presentation @relation(fields: [presentationId], references: [id], onDelete: Cascade)
+  sessionId           String
+  session             Session      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  totalParticipants   Int          @default(0)
+  peakConcurrentUsers Int          @default(0)
+  avgResponseTime     Float        @default(0)
+  completionRate      Float        @default(0)
+  dropOffRate         Float        @default(0)
+  createdAt           DateTime     @default(now())
+
+  @@index([presentationId])
+  @@map("analytics")
+}

@@ -1,0 +1,21 @@
+{
+  "name": "pollwave",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n \"server,web\" -c \"magenta,cyan\" \"npm run dev --workspace=@pollwave/server\" \"npm run dev --workspace=@pollwave/web\"",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "db:generate": "prisma generate --schema=./packages/shared/prisma/schema.prisma",
+    "db:push": "prisma db push --schema=./packages/shared/prisma/schema.prisma"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5",
+    "typescript": "^5.5.0"
+  }
+}
