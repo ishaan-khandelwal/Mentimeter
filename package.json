@@ -9,6 +9,8 @@
   "scripts": {
     "dev": "concurrently -n \"server,web\" -c \"magenta,cyan\" \"npm run dev --workspace=@pollwave/server\" \"npm run dev --workspace=@pollwave/web\"",
     "build": "npm run build --workspaces --if-present",
+    "build:server": "npm run build --workspace=@pollwave/shared && npm run build --workspace=@pollwave/server",
+    "start:server": "npm run start --workspace=@pollwave/server",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "db:generate": "prisma generate --schema=./packages/shared/prisma/schema.prisma",
