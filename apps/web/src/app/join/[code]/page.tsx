@@ -111,8 +111,18 @@ export default function AttendeeVotingPage() {
     };
 
     const onError = (data: { code: string; message: string }) => {
-      setStatus('error');
-      setErrorMessage(data.message || 'Unable to join session');
+      if (data.code === 'ALREADY_VOTED') {
+        if (currentSlideId) {
+          setVotedSlides((prev) => ({ ...prev, [currentSlideId]: true }));
+        }
+        return;
+      }
+      if (data.code === 'SESSION_NOT_FOUND' || data.code === 'SESSION_NOT_ACTIVE') {
+        setStatus('error');
+        setErrorMessage(data.message || 'The session code is invalid or the presentation has ended.');
+        return;
+      }
+      console.warn('[Socket Error]', data);
     };
 
     socket.on('connect', onConnect);
@@ -141,7 +151,7 @@ export default function AttendeeVotingPage() {
   // Submit generic vote
   const submitVote = useCallback(
     (value: any) => {
-      if (!currentSlideId || votingLocked) return;
+      if (!currentSlideId || votingLocked || votedSlides[currentSlideId]) return;
       const socket = getSocket();
       socket.emit('submit_vote', {
         slideId: currentSlideId,
@@ -150,11 +160,12 @@ export default function AttendeeVotingPage() {
       });
       setVotedSlides((prev) => ({ ...prev, [currentSlideId]: true }));
     },
-    [currentSlideId, votingLocked, participantToken],
+    [currentSlideId, votingLocked, participantToken, votedSlides],
   );
 
   // Submit Multiple Choice
   const handleMultipleChoiceSubmit = (opt: string) => {
+    if (votingLocked || hasVotedCurrent) return;
     const isMulti = activeSlide?.config?.allowMultiple;
     if (isMulti) {
       const next = selectedOptions.includes(opt)
@@ -254,7 +265,7 @@ export default function AttendeeVotingPage() {
       <div className="attendee-screen" style={{ justifyContent: 'center', alignItems: 'center' }}>
         <div className="card" style={{ padding: '40px', textAlign: 'center', maxWidth: '440px' }}>
           <div style={{ fontSize: '3rem', marginBottom: '16px' }}>❌</div>
-          <h2>Session Not Found</h2>
+          <h2>Session Unavailable</h2>
           <p style={{ color: 'var(--color-text-secondary)', margin: '12px 0 24px' }}>
             {errorMessage || 'The session code is invalid or the presentation has ended.'}
           </p>
@@ -338,7 +349,7 @@ export default function AttendeeVotingPage() {
                     <button
                       key={i}
                       onClick={() => handleMultipleChoiceSubmit(opt)}
-                      disabled={votingLocked}
+                      disabled={votingLocked || hasVotedCurrent}
                       className="card card--hover"
                       style={{
                         padding: '18px 24px',
@@ -355,9 +366,10 @@ export default function AttendeeVotingPage() {
                         color: 'var(--color-text-primary)',
                         fontSize: '1.05rem',
                         fontWeight: 600,
-                        cursor: votingLocked ? 'not-allowed' : 'pointer',
+                        cursor: votingLocked || hasVotedCurrent ? 'not-allowed' : 'pointer',
                         borderRadius: '12px',
                         transition: 'all 0.15s ease',
+                        opacity: hasVotedCurrent && !isSelected ? 0.6 : 1,
                       }}
                     >
                       <span
@@ -381,6 +393,28 @@ export default function AttendeeVotingPage() {
                     </button>
                   );
                 })}
+
+                {hasVotedCurrent && (
+                  <div
+                    style={{
+                      textAlign: 'center',
+                      padding: '14px 20px',
+                      background: 'rgba(34, 197, 94, 0.12)',
+                      border: '1px solid rgba(34, 197, 94, 0.3)',
+                      borderRadius: '12px',
+                      color: '#86efac',
+                      fontWeight: 600,
+                      marginTop: '8px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                    }}
+                  >
+                    <span>✓</span>
+                    <span>Vote recorded! Waiting for presenter...</span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -474,7 +508,7 @@ export default function AttendeeVotingPage() {
                       <button
                         key={score}
                         onClick={() => handleRatingSubmit(score)}
-                        disabled={votingLocked}
+                        disabled={votingLocked || hasVotedCurrent}
                         style={{
                           width: '52px',
                           height: '52px',
@@ -484,8 +518,9 @@ export default function AttendeeVotingPage() {
                           color: 'white',
                           fontSize: '1.25rem',
                           fontWeight: 700,
-                          cursor: votingLocked ? 'not-allowed' : 'pointer',
+                          cursor: votingLocked || hasVotedCurrent ? 'not-allowed' : 'pointer',
                           transition: 'all 0.15s ease',
+                          opacity: hasVotedCurrent && !isSelected ? 0.6 : 1,
                         }}
                       >
                         {score}
@@ -498,6 +533,23 @@ export default function AttendeeVotingPage() {
                   <span>{activeSlide.config?.lowLabel || 'Poor'}</span>
                   <span>{activeSlide.config?.highLabel || 'Excellent'}</span>
                 </div>
+
+                {hasVotedCurrent && (
+                  <div
+                    style={{
+                      textAlign: 'center',
+                      padding: '12px 16px',
+                      background: 'rgba(34, 197, 94, 0.12)',
+                      border: '1px solid rgba(34, 197, 94, 0.3)',
+                      borderRadius: '12px',
+                      color: '#86efac',
+                      fontWeight: 600,
+                      marginTop: '16px',
+                    }}
+                  >
+                    ✓ Rating submitted! Waiting for presenter...
+                  </div>
+                )}
               </div>
             )}
 
