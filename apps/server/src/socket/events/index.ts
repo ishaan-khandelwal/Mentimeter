@@ -412,10 +412,10 @@ export function registerSocketHandlers(io: IOServer): void {
 
       let targetSlide = slides[0];
       if (nextSlideId) {
-        const found = slides.find((s) => s.id === nextSlideId);
+        const found = slides.find((s: any) => s.id === nextSlideId);
         if (found) targetSlide = found;
       } else if (session.currentSlideId) {
-        const currentIndex = slides.findIndex((s) => s.id === session.currentSlideId);
+        const currentIndex = slides.findIndex((s: any) => s.id === session.currentSlideId);
         if (currentIndex >= 0) {
           targetSlide = slides[currentIndex];
         }
