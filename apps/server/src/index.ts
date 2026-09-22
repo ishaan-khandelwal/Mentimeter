@@ -46,8 +46,23 @@ async function main() {
   const app = express();
 
   app.use(helmet());
+  const isAllowedOrigin = (origin: string | undefined): boolean => {
+    if (!origin) return true;
+    const cleanOrigin = origin.replace(/\/$/, '');
+    const cleanClient = config.clientUrl.replace(/\/$/, '');
+    if (cleanOrigin === cleanClient || cleanOrigin === 'http://localhost:3000') return true;
+    if (cleanOrigin.endsWith('.vercel.app')) return true;
+    return false;
+  };
+
   app.use(cors({
-    origin: config.clientUrl,
+    origin: (origin, callback) => {
+      if (isAllowedOrigin(origin)) {
+        callback(null, true);
+      } else {
+        callback(null, true);
+      }
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
   }));
@@ -83,7 +98,9 @@ async function main() {
 
   const io = new IOServer(httpServer, {
     cors: {
-      origin: config.clientUrl,
+      origin: (origin, callback) => {
+        callback(null, isAllowedOrigin(origin));
+      },
       methods: ['GET', 'POST'],
       credentials: true,
     },

@@ -7,13 +7,22 @@ function required(name: string): string {
   return val;
 }
 
+function cleanRedisUrl(raw: string): string {
+  const match = raw.match(/(rediss?:\/\/[^\s]+)/);
+  let clean = match ? match[1] : raw.trim();
+  if (raw.includes('--tls') && clean.startsWith('redis://')) {
+    clean = clean.replace('redis://', 'rediss://');
+  }
+  return clean;
+}
+
 export const config = {
   port: parseInt(process.env.PORT || '4000', 10),
   databaseUrl: required('DATABASE_URL'),
-  redisUrl: required('REDIS_URL'),
+  redisUrl: cleanRedisUrl(required('REDIS_URL')),
   jwtSecret: required('JWT_SECRET'),
   serverSecret: required('SERVER_SECRET'),
-  clientUrl: process.env.CLIENT_URL || 'http://localhost:3000',
+  clientUrl: (process.env.CLIENT_URL || 'http://localhost:3000').replace(/\/$/, ''),
   nodeEnv: process.env.NODE_ENV || 'development',
   /** Flush tally to MongoDB every N ms (default 3s) */
   flushIntervalMs: parseInt(process.env.FLUSH_INTERVAL_MS || '3000', 10),
