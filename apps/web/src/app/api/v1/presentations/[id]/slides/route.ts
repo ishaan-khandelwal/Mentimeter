@@ -79,7 +79,7 @@ export async function GET(_req: Request, { params }: RouteParams) {
     orderBy: { order: 'asc' },
   });
 
-  const formatted = slides.map((s) => ({
+  const formatted = slides.map((s: any) => ({
     ...s,
     _id: s.id,
     options: (s.options as string[]) || [],

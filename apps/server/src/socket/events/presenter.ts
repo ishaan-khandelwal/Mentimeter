@@ -41,7 +41,7 @@ export async function handleNextSlide(
   if (slides.length === 0) return;
 
   const currentIndex = slides.findIndex(
-    (s) => s.id === session.currentSlideId,
+    (s: any) => s.id === session.currentSlideId,
   );
   const nextSlide = slides[Math.min(currentIndex + 1, slides.length - 1)];
 
@@ -77,7 +77,7 @@ export async function handlePrevSlide(
   if (slides.length === 0) return;
 
   const currentIndex = slides.findIndex(
-    (s) => s.id === session.currentSlideId,
+    (s: any) => s.id === session.currentSlideId,
   );
   const prevSlide = slides[Math.max(currentIndex - 1, 0)];
 

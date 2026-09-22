@@ -26,7 +26,7 @@ export async function GET() {
     },
   });
 
-  const formatted = presentations.map((p) => ({
+  const formatted = presentations.map((p: any) => ({
     _id: p.id,
     id: p.id,
     title: p.title,

@@ -38,7 +38,7 @@ export async function POST(
 
   // Batch update slide orders in a single transaction
   await prisma.$transaction(
-    slideIds.map((slideId, index) =>
+    slideIds.map((slideId: string, index: number) =>
       prisma.slide.update({
         where: { id: slideId },
         data: { order: index },

@@ -42,7 +42,7 @@ router.get('/join/:code', async (req: Request, res: Response) => {
       title: presentation.title,
       currentSlideId: session.currentSlideId,
       votingLocked: session.votingLocked,
-      slides: slides.map((s) => ({
+      slides: slides.map((s: any) => ({
         _id: s.id,
         type: s.type,
         question: s.question,

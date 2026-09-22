@@ -100,7 +100,7 @@ export function registerSocketHandlers(io: IOServer): void {
           orderBy: { order: 'asc' },
         });
 
-        const slideIds = slides.map((s) => s.id);
+        const slideIds = slides.map((s: any) => s.id);
 
         // Hydrate local tally from Redis (handles server restarts)
         await hydrateSessionTally(sessionId, slideIds);
@@ -125,7 +125,7 @@ export function registerSocketHandlers(io: IOServer): void {
           sessionId,
           currentSlideId: session.currentSlideId ?? null,
           votingLocked: session.votingLocked,
-          slides: slides.map((s) => ({
+          slides: slides.map((s: any) => ({
             _id: s.id,
             type: s.type,
             question: s.question,

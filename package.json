@@ -12,7 +12,8 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "db:generate": "prisma generate --schema=./packages/shared/prisma/schema.prisma",
-    "db:push": "prisma db push --schema=./packages/shared/prisma/schema.prisma"
+    "db:push": "prisma db push --schema=./packages/shared/prisma/schema.prisma",
+    "postinstall": "prisma generate --schema=./packages/shared/prisma/schema.prisma"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",

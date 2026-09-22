@@ -33,7 +33,7 @@ export async function GET(_req: Request, { params }: RouteParams) {
     _id: presentation.id,
   };
 
-  const formattedSlides = slides.map((s) => ({
+  const formattedSlides = slides.map((s: any) => ({
     ...s,
     _id: s.id,
     options: (s.options as string[]) || [],
