@@ -234,7 +234,7 @@ export function registerSocketHandlers(io: IOServer): void {
       });
 
       const sessionId = session.id;
-      const slideIds = slides.map((s) => s.id);
+      const slideIds = slides.map((s: any) => s.id);
       registerSession(sessionId, presentationId, slideIds);
 
       // Update socket state with the new sessionId
