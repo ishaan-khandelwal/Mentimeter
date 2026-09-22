@@ -81,6 +81,16 @@ async function main() {
     }),
   );
 
+  app.get('/', (_req, res) => {
+    res.json({
+      service: 'PollWave Realtime Server',
+      status: 'online',
+      version: '1.0.0',
+      health: '/api/v1/health',
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   app.use('/api/v1', healthRouter);
   app.use('/api/v1', sessionsRouter);
 
