@@ -1,10 +1,18 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { getSocket } from '@/lib/socket';
 import Link from 'next/link';
 import QRCode from 'qrcode';
+import confetti from 'canvas-confetti';
+import type {
+  GameState,
+  LeaderboardEntry,
+  QuestionTimerState,
+  FinalResultsEvent,
+  GameStateChangedEvent,
+} from '@pollwave/shared';
 
 type SlideType = 'multiple_choice' | 'word_cloud' | 'open_text' | 'rating_scale' | 'ranking' | 'qa';
 
@@ -54,6 +62,21 @@ export default function PresenterLivePage() {
   const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
   const [showQrModal, setShowQrModal] = useState(false);
 
+  // Competition Game Loop State
+  const [gameState, setGameState] = useState<GameState>('LOBBY');
+  const [lobbyParticipants, setLobbyParticipants] = useState<
+    Array<{ token: string; nickname: string; avatar: string }>
+  >([]);
+  const [countdownNumber, setCountdownNumber] = useState<number>(3);
+  const [timerState, setTimerState] = useState<QuestionTimerState | null>(null);
+  const [remainingTime, setRemainingTime] = useState<number>(20);
+  const [revealData, setRevealData] = useState<{
+    correctAnswer?: string | string[];
+    revealTally?: Record<string, number>;
+  } | null>(null);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [finalResults, setFinalResults] = useState<FinalResultsEvent | null>(null);
+
   // AI Summary states
   const [aiSummary, setAiSummary] = useState<AiSummaryResult | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
@@ -78,7 +101,6 @@ export default function PresenterLivePage() {
           setCurrentSlideId(data.slides[0]._id);
         }
 
-        // Generate QR code for joining
         if (data.presentation?.joinCode) {
           const joinUrl = `${window.location.origin}/join/${data.presentation.joinCode}`;
           const qr = await QRCode.toDataURL(joinUrl, { margin: 2, width: 300 });
@@ -116,8 +138,6 @@ export default function PresenterLivePage() {
         }
 
         const { token } = await tokenRes.json();
-
-        // Start or join session
         socket.emit('start_session', { presentationId: id, token });
       } catch (err) {
         console.error('Presenter auth error:', err);
@@ -132,10 +152,18 @@ export default function PresenterLivePage() {
       setVotingLocked(data.votingLocked);
     };
 
+    const onPresenterJoined = (data: any) => {
+      setSessionId(data.sessionId);
+      if (data.currentSlideId) setCurrentSlideId(data.currentSlideId);
+      setVotingLocked(data.votingLocked);
+      if (data.gameState) setGameState(data.gameState);
+      if (data.lobby?.participants) setLobbyParticipants(data.lobby.participants);
+    };
+
     const onSlideChanged = (data: { currentSlideId: string; votingLocked: boolean }) => {
       setCurrentSlideId(data.currentSlideId);
       setVotingLocked(data.votingLocked);
-      setAiSummary(null); // Clear summary for new slide
+      setAiSummary(null);
     };
 
     const onVotingLocked = (data: { locked: boolean }) => {
@@ -157,22 +185,114 @@ export default function PresenterLivePage() {
       setQaList(data.questions || []);
     };
 
+    // Quiz Game Loop Events
+    const onGameStateChanged = (data: GameStateChangedEvent) => {
+      setGameState(data.state);
+      if (data.countdown !== undefined) setCountdownNumber(data.countdown);
+      if (data.slideId) setCurrentSlideId(data.slideId);
+      if (data.timer) {
+        setTimerState(data.timer);
+        setRemainingTime(data.timer.durationSeconds);
+      }
+      if (data.state === 'REVEAL') {
+        setRevealData({
+          correctAnswer: data.correctAnswer,
+          revealTally: data.revealTally,
+        });
+      }
+    };
+
+    const onLobbyUpdate = (data: {
+      participants: Array<{ token: string; nickname: string; avatar: string }>;
+      count: number;
+    }) => {
+      setLobbyParticipants(data.participants || []);
+      setPresenceCount(data.count || 0);
+    };
+
+    const onTimerUpdate = (data: { slideId: string; answeredCount: number; totalParticipants: number }) => {
+      setTimerState((prev) =>
+        prev ? { ...prev, answeredCount: data.answeredCount, totalParticipants: data.totalParticipants } : null
+      );
+    };
+
+    const onLeaderboardUpdate = (data: { entries: LeaderboardEntry[]; totalParticipants: number }) => {
+      setLeaderboard(data.entries || []);
+    };
+
+    const onFinalResults = (data: FinalResultsEvent) => {
+      setFinalResults(data);
+    };
+
     socket.on('session_started', onSessionStarted);
+    socket.on('presenter_joined', onPresenterJoined);
     socket.on('slide_changed', onSlideChanged);
     socket.on('voting_locked', onVotingLocked);
     socket.on('tally_update', onTallyUpdate);
     socket.on('presence_update', onPresenceUpdate);
     socket.on('question_update', onQuestionUpdate);
+    socket.on('game_state_changed', onGameStateChanged);
+    socket.on('lobby_update', onLobbyUpdate);
+    socket.on('timer_update', onTimerUpdate);
+    socket.on('leaderboard_update', onLeaderboardUpdate);
+    socket.on('final_results', onFinalResults);
 
     return () => {
       socket.off('session_started', onSessionStarted);
+      socket.off('presenter_joined', onPresenterJoined);
       socket.off('slide_changed', onSlideChanged);
       socket.off('voting_locked', onVotingLocked);
       socket.off('tally_update', onTallyUpdate);
       socket.off('presence_update', onPresenceUpdate);
       socket.off('question_update', onQuestionUpdate);
+      socket.off('game_state_changed', onGameStateChanged);
+      socket.off('lobby_update', onLobbyUpdate);
+      socket.off('timer_update', onTimerUpdate);
+      socket.off('leaderboard_update', onLeaderboardUpdate);
+      socket.off('final_results', onFinalResults);
     };
   }, [presentation, id]);
+
+  // Question active timer countdown effect
+  useEffect(() => {
+    if (gameState !== 'QUESTION_ACTIVE' || !timerState) return;
+
+    const interval = setInterval(() => {
+      const elapsed = (Date.now() - timerState.questionStartedAt) / 1000;
+      const left = Math.max(0, timerState.durationSeconds - elapsed);
+      setRemainingTime(Math.ceil(left));
+    }, 200);
+
+    return () => clearInterval(interval);
+  }, [gameState, timerState]);
+
+  // Final Results Confetti
+  useEffect(() => {
+    if (gameState === 'FINAL_RESULTS') {
+      confetti({
+        particleCount: 160,
+        spread: 90,
+        origin: { y: 0.6 },
+      });
+
+      const interval = setInterval(() => {
+        confetti({
+          particleCount: 80,
+          angle: 60,
+          spread: 55,
+          origin: { x: 0 },
+        });
+        confetti({
+          particleCount: 80,
+          angle: 120,
+          spread: 55,
+          origin: { x: 1 },
+        });
+      }, 1600);
+
+      return () => clearInterval(interval);
+    }
+  }, [gameState]);
 
   const currentIndex = slides.findIndex((s) => s._id === currentSlideId);
   const activeSlide = slides[currentIndex] || slides[0] || null;
@@ -210,6 +330,71 @@ export default function PresenterLivePage() {
     router.push('/dashboard');
   };
 
+  // Game Loop Controls
+  const handleStartQuiz = () => {
+    if (!sessionId || slides.length === 0) return;
+    const socket = getSocket();
+    socket.emit('advance_quiz', {
+      sessionId,
+      targetState: 'COUNTDOWN',
+      nextSlideId: slides[0]._id,
+    });
+  };
+
+  const handleLockQuestion = () => {
+    if (!sessionId) return;
+    const socket = getSocket();
+    socket.emit('advance_quiz', {
+      sessionId,
+      targetState: 'QUESTION_LOCKED',
+    });
+  };
+
+  const handleRevealAnswer = () => {
+    if (!sessionId) return;
+    const socket = getSocket();
+    socket.emit('advance_quiz', {
+      sessionId,
+      targetState: 'REVEAL',
+    });
+  };
+
+  const handleShowLeaderboard = () => {
+    if (!sessionId) return;
+    const socket = getSocket();
+    socket.emit('advance_quiz', {
+      sessionId,
+      targetState: 'LEADERBOARD',
+    });
+  };
+
+  const handleNextQuestion = () => {
+    if (!sessionId) return;
+    const socket = getSocket();
+    if (currentIndex < slides.length - 1) {
+      const nextSlide = slides[currentIndex + 1];
+      socket.emit('advance_quiz', {
+        sessionId,
+        targetState: 'COUNTDOWN',
+        nextSlideId: nextSlide._id,
+      });
+    } else {
+      socket.emit('advance_quiz', {
+        sessionId,
+        targetState: 'FINAL_RESULTS',
+      });
+    }
+  };
+
+  const handleShowFinalResults = () => {
+    if (!sessionId) return;
+    const socket = getSocket();
+    socket.emit('advance_quiz', {
+      sessionId,
+      targetState: 'FINAL_RESULTS',
+    });
+  };
+
   // Generate Claude AI summary of audience responses
   const handleGenerateAiSummary = async () => {
     if (!activeSlide || !currentSlideId) return;
@@ -218,35 +403,29 @@ export default function PresenterLivePage() {
 
     try {
       const currentTally = tallies[currentSlideId] || {};
-      const responseList = Object.entries(currentTally).map(([key, count]) => ({
-        answer: key,
-        votes: count,
-      }));
-
       const res = await fetch('/api/v1/ai/summary', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           question: activeSlide.question,
-          slideType: activeSlide.type,
-          responses: responseList.length > 0 ? responseList : [{ answer: 'No responses yet', votes: 0 }],
+          type: activeSlide.type,
+          responses: currentTally,
         }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        setAiSummary(data);
-      }
+      if (!res.ok) throw new Error('Failed to generate summary');
+      const data = await res.json();
+      setAiSummary(data);
     } catch (err) {
-      console.error('Failed to get AI summary:', err);
+      console.error('AI summary error:', err);
     } finally {
       setAiLoading(false);
     }
   };
 
-  // Compute stats for current active slide
   const currentTally = useMemo(() => {
-    return currentSlideId && tallies[currentSlideId] ? tallies[currentSlideId] : {};
+    if (!currentSlideId) return {};
+    return tallies[currentSlideId] || {};
   }, [currentSlideId, tallies]);
 
   const totalVotes = useMemo(() => {
@@ -262,6 +441,16 @@ export default function PresenterLivePage() {
     );
   }
 
+  // Option background colors (Kahoot / Mentimeter theme: Red, Blue, Yellow, Green)
+  const optionColors = [
+    { bg: '#ef4444', text: '#ffffff', symbol: '▲' },
+    { bg: '#3b82f6', text: '#ffffff', symbol: '◆' },
+    { bg: '#f59e0b', text: '#ffffff', symbol: '●' },
+    { bg: '#10b981', text: '#ffffff', symbol: '■' },
+    { bg: '#8b5cf6', text: '#ffffff', symbol: '★' },
+    { bg: '#ec4899', text: '#ffffff', symbol: '✦' },
+  ];
+
   return (
     <div className="presenter-layout" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       {/* Top Presenter Toolbar */}
@@ -273,6 +462,20 @@ export default function PresenterLivePage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <span style={{ fontWeight: 800, fontSize: '1.1rem' }}>{presentation?.title}</span>
             <span className="badge badge--live">● LIVE</span>
+            <span
+              style={{
+                fontSize: '0.78rem',
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                padding: '3px 8px',
+                borderRadius: '6px',
+                background: 'rgba(124, 92, 252, 0.2)',
+                color: '#a78bfa',
+                border: '1px solid rgba(124, 92, 252, 0.3)',
+              }}
+            >
+              {gameState}
+            </span>
           </div>
         </div>
 
@@ -316,16 +519,9 @@ export default function PresenterLivePage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.88rem' }}>
             <span style={{ color: '#22c55e', fontSize: '1.2rem' }}>●</span>
-            <span style={{ fontWeight: 700 }}>{presenceCount}</span>
-            <span style={{ color: 'var(--color-text-muted)' }}>online</span>
+            <span style={{ fontWeight: 700 }}>{Math.max(presenceCount, lobbyParticipants.length)}</span>
+            <span style={{ color: 'var(--color-text-muted)' }}>players</span>
           </div>
-
-          <button
-            onClick={handleToggleLock}
-            className={`btn btn--sm ${votingLocked ? 'btn--secondary' : 'btn--ghost'}`}
-          >
-            {votingLocked ? '🔓 Unlock Voting' : '🔒 Lock Voting'}
-          </button>
 
           <button
             onClick={handleGenerateAiSummary}
@@ -340,393 +536,861 @@ export default function PresenterLivePage() {
         </div>
       </div>
 
-      {/* Main Slide Display Area */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '40px 60px', overflowY: 'auto' }}>
-        {activeSlide ? (
-          <div style={{ maxWidth: '1000px', width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', flex: 1 }}>
-            {/* Slide Question Header */}
-            <div style={{ textAlign: 'center', marginBottom: '40px' }}>
-              <span
+      {/* ─── 1. LOBBY STATE (Waiting Room Hero) ─────────────────────────────── */}
+      {gameState === 'LOBBY' && (
+        <div
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '40px 24px',
+            background: 'radial-gradient(ellipse at center, rgba(124, 92, 252, 0.12) 0%, rgba(13, 13, 26, 1) 70%)',
+          }}
+        >
+          <div style={{ maxWidth: '850px', width: '100%', textAlign: 'center' }}>
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '6px 18px',
+                borderRadius: '100px',
+                background: 'rgba(124, 92, 252, 0.2)',
+                border: '1px solid rgba(124, 92, 252, 0.4)',
+                color: '#c4b5fd',
+                fontWeight: 700,
+                fontSize: '0.95rem',
+                marginBottom: '20px',
+              }}
+            >
+              🎮 WAITING ROOM
+            </div>
+
+            <h1 style={{ fontSize: 'clamp(2.4rem, 5vw, 4rem)', fontWeight: 900, marginBottom: '16px' }}>
+              Join the Quiz Challenge
+            </h1>
+
+            {/* Huge Join Code Callout */}
+            <div
+              style={{
+                background: 'rgba(255, 255, 255, 0.04)',
+                border: '2px solid rgba(124, 92, 252, 0.4)',
+                borderRadius: '24px',
+                padding: '28px 40px',
+                display: 'inline-flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '16px',
+                boxShadow: '0 12px 40px rgba(0, 0, 0, 0.4)',
+                marginBottom: '36px',
+              }}
+            >
+              <div style={{ color: 'var(--color-text-secondary)', fontSize: '1.2rem' }}>
+                Go to <strong style={{ color: '#ffffff' }}>{typeof window !== 'undefined' ? window.location.host : 'pollwave.io'}/join</strong>
+              </div>
+              <div
                 style={{
-                  fontSize: '0.85rem',
-                  color: 'var(--color-primary-light)',
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.1em',
+                  fontSize: 'clamp(3rem, 6vw, 4.8rem)',
+                  fontWeight: 900,
+                  letterSpacing: '0.15em',
+                  background: 'var(--gradient-brand)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                  lineHeight: 1,
                 }}
               >
-                Question {currentIndex + 1} of {slides.length}
+                {presentation?.joinCode}
+              </div>
+              {qrCodeUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={qrCodeUrl}
+                  alt="QR Code"
+                  style={{ width: '160px', height: '160px', borderRadius: '12px', background: '#fff', padding: '6px' }}
+                />
+              )}
+            </div>
+
+            {/* Players Joined Counter */}
+            <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontSize: '1.3rem', fontWeight: 800, color: '#22c55e' }}>
+                👥 {lobbyParticipants.length} Players Joined
               </span>
+            </div>
+
+            {/* Participant Avatar Grid */}
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                justifyContent: 'center',
+                gap: '12px',
+                maxHeight: '220px',
+                overflowY: 'auto',
+                padding: '16px',
+                background: 'rgba(255, 255, 255, 0.02)',
+                borderRadius: '18px',
+                border: '1px solid rgba(255, 255, 255, 0.05)',
+                marginBottom: '36px',
+              }}
+            >
+              {lobbyParticipants.length === 0 ? (
+                <div style={{ color: 'var(--color-text-muted)', fontSize: '1.1rem', padding: '20px' }}>
+                  Waiting for players to enter their nicknames...
+                </div>
+              ) : (
+                lobbyParticipants.map((p) => (
+                  <div
+                    key={p.token}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '8px 16px',
+                      borderRadius: '100px',
+                      background: 'rgba(255, 255, 255, 0.06)',
+                      border: '1px solid rgba(255, 255, 255, 0.12)',
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+                      animation: 'popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+                    }}
+                  >
+                    <span style={{ fontSize: '1.4rem' }}>{p.avatar}</span>
+                    <span style={{ fontWeight: 700, fontSize: '1rem', color: '#ffffff' }}>{p.nickname}</span>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Start Quiz CTA */}
+            <button
+              onClick={handleStartQuiz}
+              className="btn btn--primary"
+              style={{
+                fontSize: '1.35rem',
+                padding: '16px 48px',
+                borderRadius: '100px',
+                fontWeight: 800,
+                boxShadow: '0 8px 30px rgba(124, 92, 252, 0.5)',
+              }}
+            >
+              🚀 Start Quiz
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ─── 2. COUNTDOWN STATE (3... 2... 1...) ────────────────────────────── */}
+      {gameState === 'COUNTDOWN' && (
+        <div
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'radial-gradient(circle at center, rgba(236, 72, 153, 0.15) 0%, rgba(13, 13, 26, 1) 70%)',
+            textAlign: 'center',
+            padding: '40px',
+          }}
+        >
+          <div style={{ color: 'var(--color-text-secondary)', fontSize: '1.3rem', fontWeight: 700, marginBottom: '16px' }}>
+            QUESTION {currentIndex + 1} OF {slides.length}
+          </div>
+          <div
+            style={{
+              width: '180px',
+              height: '180px',
+              borderRadius: '50%',
+              background: 'linear-gradient(135deg, #ec4899 0%, #7c5cfc 100%)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '6.5rem',
+              fontWeight: 900,
+              color: '#ffffff',
+              boxShadow: '0 0 60px rgba(236, 72, 153, 0.6)',
+              marginBottom: '32px',
+              animation: 'pulse 1s infinite',
+            }}
+          >
+            {countdownNumber}
+          </div>
+          <h2 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '12px' }}>Get Ready!</h2>
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '1.2rem', maxWidth: '600px' }}>
+            {activeSlide?.question}
+          </p>
+        </div>
+      )}
+
+      {/* ─── 3. QUESTION_ACTIVE / QUESTION_LOCKED / REVEAL ────────────────── */}
+      {(gameState === 'QUESTION_ACTIVE' || gameState === 'QUESTION_LOCKED' || gameState === 'REVEAL') && (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '30px 48px', overflowY: 'auto' }}>
+          {activeSlide ? (
+            <div style={{ maxWidth: '1100px', width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', flex: 1 }}>
+              {/* Question Header & Live Timer */}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: '28px',
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  padding: '16px 28px',
+                  borderRadius: '16px',
+                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                }}
+              >
+                <div>
+                  <span
+                    style={{
+                      fontSize: '0.85rem',
+                      color: 'var(--color-primary-light)',
+                      fontWeight: 700,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.1em',
+                    }}
+                  >
+                    Question {currentIndex + 1} of {slides.length}
+                  </span>
+                  <div style={{ fontSize: '1.1rem', color: 'var(--color-text-secondary)', fontWeight: 600, marginTop: '2px' }}>
+                    👥 {timerState?.answeredCount ?? totalVotes} / {Math.max(lobbyParticipants.length, 1)} Answered
+                  </div>
+                </div>
+
+                {/* Animated Shrinking Timer Badge */}
+                {gameState === 'QUESTION_ACTIVE' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: '74px',
+                        height: '74px',
+                        borderRadius: '50%',
+                        border: `4px solid ${remainingTime <= 5 ? '#ef4444' : '#7c5cfc'}`,
+                        background: remainingTime <= 5 ? 'rgba(239, 68, 68, 0.15)' : 'rgba(124, 92, 252, 0.15)',
+                        fontSize: '1.8rem',
+                        fontWeight: 900,
+                        color: remainingTime <= 5 ? '#ef4444' : '#ffffff',
+                        boxShadow: remainingTime <= 5 ? '0 0 24px rgba(239, 68, 68, 0.5)' : '0 0 20px rgba(124, 92, 252, 0.3)',
+                      }}
+                    >
+                      {remainingTime}s
+                    </div>
+                    <button onClick={handleLockQuestion} className="btn btn--secondary btn--sm">
+                      ⏹ Lock
+                    </button>
+                  </div>
+                )}
+
+                {gameState === 'QUESTION_LOCKED' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                    <span
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: '100px',
+                        background: 'rgba(239, 68, 68, 0.2)',
+                        color: '#f87171',
+                        fontWeight: 800,
+                        fontSize: '0.9rem',
+                        border: '1px solid rgba(239, 68, 68, 0.4)',
+                      }}
+                    >
+                      🔒 TIME'S UP
+                    </span>
+                    <button onClick={handleRevealAnswer} className="btn btn--primary btn--sm" style={{ padding: '8px 20px' }}>
+                      ✨ Reveal Answer
+                    </button>
+                  </div>
+                )}
+
+                {gameState === 'REVEAL' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                    <span
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: '100px',
+                        background: 'rgba(34, 197, 94, 0.2)',
+                        color: '#4ade80',
+                        fontWeight: 800,
+                        fontSize: '0.9rem',
+                        border: '1px solid rgba(34, 197, 94, 0.4)',
+                      }}
+                    >
+                      ✓ REVEALED
+                    </span>
+                    <button onClick={handleShowLeaderboard} className="btn btn--primary btn--sm" style={{ padding: '8px 20px' }}>
+                      🏆 Show Leaderboard
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Big Question Prompt */}
               <h1
                 style={{
-                  fontSize: 'clamp(2rem, 4vw, 3.2rem)',
-                  fontWeight: 800,
-                  marginTop: '8px',
+                  fontSize: 'clamp(2rem, 3.5vw, 3rem)',
+                  fontWeight: 900,
+                  textAlign: 'center',
+                  marginBottom: '36px',
                   lineHeight: 1.25,
                 }}
               >
                 {activeSlide.question}
               </h1>
-            </div>
 
-            {/* Visualizer per Slide Type */}
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-              {/* Multiple Choice Chart */}
-              {activeSlide.type === 'multiple_choice' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {/* Options Grid (Kahoot / Mentimeter style) */}
+              {activeSlide.type === 'multiple_choice' ? (
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
+                    gap: '20px',
+                    marginBottom: '24px',
+                  }}
+                >
                   {(activeSlide.options || []).map((opt, i) => {
                     const votes = currentTally[opt] || 0;
                     const percent = totalVotes > 0 ? Math.round((votes / totalVotes) * 100) : 0;
-                    const colors = ['#7c5cfc', '#00d4aa', '#f59e0b', '#ec4899', '#3b82f6'];
-                    const barColor = colors[i % colors.length];
+                    const colorScheme = optionColors[i % optionColors.length];
+
+                    const isCorrectAnswer =
+                      gameState === 'REVEAL' &&
+                      (activeSlide.config?.correctAnswer === opt ||
+                        revealData?.correctAnswer === opt ||
+                        (Array.isArray(revealData?.correctAnswer) && revealData.correctAnswer.includes(opt)));
+
+                    const isDimmed = gameState === 'REVEAL' && !isCorrectAnswer;
 
                     return (
                       <div
                         key={opt}
                         style={{
-                          background: 'rgba(255, 255, 255, 0.03)',
-                          border: '1px solid var(--color-border)',
-                          borderRadius: '16px',
-                          padding: '16px 24px',
+                          borderRadius: '20px',
+                          background: isCorrectAnswer
+                            ? 'rgba(34, 197, 94, 0.18)'
+                            : 'rgba(255, 255, 255, 0.04)',
+                          border: isCorrectAnswer
+                            ? '3px solid #22c55e'
+                            : '2px solid rgba(255, 255, 255, 0.08)',
+                          boxShadow: isCorrectAnswer ? '0 0 30px rgba(34, 197, 94, 0.4)' : 'none',
+                          padding: '24px',
                           position: 'relative',
                           overflow: 'hidden',
+                          opacity: isDimmed ? 0.45 : 1,
+                          transition: 'all 0.3s ease',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'space-between',
+                          minHeight: '140px',
                         }}
                       >
-                        {/* Background Animated Progress Bar */}
-                        <div
-                          style={{
-                            position: 'absolute',
-                            left: 0,
-                            top: 0,
-                            bottom: 0,
-                            width: `${percent}%`,
-                            background: `${barColor}25`,
-                            borderRight: `3px solid ${barColor}`,
-                            transition: 'width 0.4s ease-out',
-                            zIndex: 0,
-                          }}
-                        />
+                        {/* Fill percentage bar when revealed */}
+                        {gameState === 'REVEAL' && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              left: 0,
+                              top: 0,
+                              bottom: 0,
+                              width: `${percent}%`,
+                              background: isCorrectAnswer ? 'rgba(34, 197, 94, 0.25)' : `${colorScheme.bg}25`,
+                              borderRight: isCorrectAnswer ? '3px solid #22c55e' : `3px solid ${colorScheme.bg}`,
+                              zIndex: 0,
+                              transition: 'width 0.6s cubic-bezier(0.16, 1, 0.3, 1)',
+                            }}
+                          />
+                        )}
 
-                        {/* Option Content */}
-                        <div
-                          style={{
-                            position: 'relative',
-                            zIndex: 1,
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        <div style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', gap: '16px' }}>
+                          <span
+                            style={{
+                              width: '44px',
+                              height: '44px',
+                              borderRadius: '12px',
+                              background: colorScheme.bg,
+                              color: colorScheme.text,
+                              fontWeight: 900,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: '1.4rem',
+                              boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                            }}
+                          >
+                            {colorScheme.symbol}
+                          </span>
+                          <span style={{ fontSize: '1.35rem', fontWeight: 700, color: '#ffffff', flex: 1 }}>
+                            {opt}
+                          </span>
+                          {isCorrectAnswer && (
                             <span
                               style={{
-                                width: '36px',
-                                height: '36px',
-                                borderRadius: '10px',
-                                background: barColor,
+                                background: '#22c55e',
                                 color: '#0d0d1a',
-                                fontWeight: 800,
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontSize: '1.1rem',
+                                fontWeight: 900,
+                                fontSize: '0.85rem',
+                                padding: '4px 12px',
+                                borderRadius: '100px',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.05em',
                               }}
                             >
-                              {String.fromCharCode(65 + i)}
+                              ✓ Correct
                             </span>
-                            <span style={{ fontSize: '1.25rem', fontWeight: 600 }}>{opt}</span>
-                          </div>
+                          )}
+                        </div>
 
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                            <span style={{ fontSize: '1.1rem', color: 'var(--color-text-secondary)', fontWeight: 600 }}>
+                        {/* Votes breakdown */}
+                        {gameState === 'REVEAL' && (
+                          <div
+                            style={{
+                              position: 'relative',
+                              zIndex: 1,
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'flex-end',
+                              marginTop: '16px',
+                            }}
+                          >
+                            <span style={{ fontSize: '1.05rem', color: 'var(--color-text-secondary)', fontWeight: 600 }}>
                               {votes} {votes === 1 ? 'vote' : 'votes'}
                             </span>
-                            <span style={{ fontSize: '1.6rem', fontWeight: 800, minWidth: '70px', textAlign: 'right' }}>
+                            <span style={{ fontSize: '1.8rem', fontWeight: 900, color: isCorrectAnswer ? '#4ade80' : '#ffffff' }}>
                               {percent}%
                             </span>
                           </div>
-                        </div>
+                        )}
                       </div>
                     );
                   })}
                 </div>
-              )}
-
-              {/* Word Cloud Visualizer */}
-              {activeSlide.type === 'word_cloud' && (
-                <div
-                  className="card"
-                  style={{
-                    padding: '48px',
-                    minHeight: '340px',
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '20px',
-                  }}
-                >
-                  {Object.keys(currentTally).length === 0 ? (
-                    <p style={{ color: 'var(--color-text-muted)', fontSize: '1.2rem' }}>
-                      Waiting for audience submissions...
-                    </p>
-                  ) : (
-                    Object.entries(currentTally).map(([word, count]) => {
-                      const maxCount = Math.max(...Object.values(currentTally), 1);
-                      const fontScale = 1.2 + (count / maxCount) * 2.2;
-                      const colors = ['#9d7eff', '#00d4aa', '#f59e0b', '#38bdf8', '#f43f5e', '#a78bfa'];
-                      const wordColor = colors[Math.abs(word.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)) % colors.length];
-
-                      return (
-                        <span
-                          key={word}
-                          style={{
-                            fontSize: `${fontScale}rem`,
-                            fontWeight: 800,
-                            color: wordColor,
-                            padding: '4px 12px',
-                            transition: 'all 0.3s ease',
-                            display: 'inline-block',
-                          }}
-                        >
-                          {word}
-                        </span>
-                      );
-                    })
-                  )}
-                </div>
-              )}
-
-              {/* Rating Scale Histogram & Average */}
-              {activeSlide.type === 'rating_scale' && (
-                <div className="card" style={{ padding: '40px', textAlign: 'center' }}>
-                  {/* Big Average Score Callout */}
-                  <div style={{ marginBottom: '32px' }}>
-                    <div
-                      style={{
-                        fontSize: '4.5rem',
-                        fontWeight: 900,
-                        background: 'var(--gradient-brand)',
-                        WebkitBackgroundClip: 'text',
-                        WebkitTextFillColor: 'transparent',
-                        lineHeight: 1,
-                      }}
-                    >
-                      {totalVotes > 0
-                        ? (
-                            Object.entries(currentTally).reduce(
-                              (acc, [val, count]) => acc + Number(val) * count,
-                              0,
-                            ) / totalVotes
-                          ).toFixed(1)
-                        : '0.0'}
+              ) : (
+                /* Fallback for other slide types: Word Cloud, Q&A, etc. */
+                <div style={{ padding: '20px 0' }}>
+                  {activeSlide.type === 'word_cloud' && (
+                    <div className="card" style={{ padding: '48px', display: 'flex', flexWrap: 'wrap', gap: '16px', justifyContent: 'center' }}>
+                      {Object.keys(currentTally).length === 0 ? (
+                        <p style={{ color: 'var(--color-text-muted)' }}>Waiting for audience words...</p>
+                      ) : (
+                        Object.entries(currentTally).map(([w, c]) => (
+                          <span key={w} style={{ fontSize: `${1.2 + c * 0.5}rem`, fontWeight: 800, color: '#a78bfa' }}>
+                            {w}
+                          </span>
+                        ))
+                      )}
                     </div>
-                    <span style={{ color: 'var(--color-text-muted)', fontSize: '1rem' }}>
-                      Average Score from {totalVotes} responses
-                    </span>
-                  </div>
+                  )}
 
-                  {/* Rating distribution columns */}
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'flex-end',
-                      justifyContent: 'center',
-                      gap: '24px',
-                      height: '180px',
-                    }}
-                  >
-                    {Array.from({ length: activeSlide.config?.max || 5 }).map((_, idx) => {
-                      const score = idx + 1;
-                      const count = currentTally[String(score)] || 0;
-                      const maxV = Math.max(...Object.values(currentTally), 1);
-                      const barHeight = totalVotes > 0 ? Math.max(12, (count / maxV) * 140) : 12;
-
-                      return (
-                        <div key={score} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-                          <span style={{ fontSize: '0.85rem', fontWeight: 700 }}>{count}</span>
-                          <div
-                            style={{
-                              width: '44px',
-                              height: `${barHeight}px`,
-                              background: 'var(--gradient-primary)',
-                              borderRadius: '8px',
-                              transition: 'height 0.3s ease',
-                            }}
-                          />
-                          <span style={{ fontSize: '1.1rem', fontWeight: 800 }}>★ {score}</span>
+                  {activeSlide.type === 'open_text' && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '16px' }}>
+                      {Object.keys(currentTally).map((t, idx) => (
+                        <div key={idx} className="card" style={{ padding: '16px' }}>
+                          &ldquo;{t}&rdquo;
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Open Text Submissions List */}
-              {activeSlide.type === 'open_text' && (
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-                    gap: '16px',
-                    maxHeight: '450px',
-                    overflowY: 'auto',
-                    padding: '8px',
-                  }}
-                >
-                  {Object.keys(currentTally).length === 0 ? (
-                    <div className="card" style={{ gridColumn: '1/-1', padding: '40px', textAlign: 'center' }}>
-                      <p style={{ color: 'var(--color-text-muted)', fontSize: '1.2rem' }}>
-                        Waiting for audience responses...
-                      </p>
+                      ))}
                     </div>
-                  ) : (
-                    Object.keys(currentTally).map((text, i) => (
-                      <div
-                        key={i}
-                        className="card page-enter"
-                        style={{ padding: '20px', fontSize: '1.05rem', lineHeight: 1.5 }}
-                      >
-                        &ldquo;{text}&rdquo;
+                  )}
+
+                  {activeSlide.type === 'rating_scale' && (
+                    <div className="card" style={{ padding: '36px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '4rem', fontWeight: 900, color: '#7c5cfc' }}>
+                        {totalVotes > 0
+                          ? (
+                              Object.entries(currentTally).reduce((a, [v, c]) => a + Number(v) * c, 0) / totalVotes
+                            ).toFixed(1)
+                          : '0.0'}
                       </div>
-                    ))
+                      <p style={{ color: 'var(--color-text-muted)' }}>Average Rating ({totalVotes} votes)</p>
+                    </div>
+                  )}
+
+                  {activeSlide.type === 'qa' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {qaList.map((q) => (
+                        <div key={q.id} className="card" style={{ padding: '16px', display: 'flex', justifyContent: 'space-between' }}>
+                          <span>{q.text}</span>
+                          <span className="badge badge--primary">▲ {q.upvotes}</span>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
               )}
+            </div>
+          ) : null}
+        </div>
+      )}
 
-              {/* Ranking Leaderboard */}
-              {activeSlide.type === 'ranking' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {(activeSlide.options || []).map((item, idx) => (
+      {/* ─── 4. LEADERBOARD STATE ─────────────────────────────────────────── */}
+      {gameState === 'LEADERBOARD' && (
+        <div
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            padding: '40px 24px',
+            background: 'radial-gradient(ellipse at top, rgba(124, 92, 252, 0.15) 0%, rgba(13, 13, 26, 1) 75%)',
+            overflowY: 'auto',
+          }}
+        >
+          <div style={{ maxWidth: '850px', width: '100%' }}>
+            <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+              <span
+                style={{
+                  fontSize: '0.9rem',
+                  fontWeight: 800,
+                  color: '#fbbf24',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.1em',
+                }}
+              >
+                🏆 ROUND {currentIndex + 1} STANDINGS
+              </span>
+              <h1 style={{ fontSize: '3rem', fontWeight: 900, marginTop: '8px' }}>Leaderboard</h1>
+            </div>
+
+            {/* Top 10 Player Cards */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '36px' }}>
+              {leaderboard.length === 0 ? (
+                <div className="card" style={{ padding: '40px', textAlign: 'center' }}>
+                  <p style={{ color: 'var(--color-text-muted)', fontSize: '1.2rem' }}>
+                    No scores recorded yet.
+                  </p>
+                </div>
+              ) : (
+                leaderboard.map((entry, idx) => {
+                  const isFirst = idx === 0;
+                  const isTopThree = idx < 3;
+
+                  return (
                     <div
-                      key={item}
-                      className="card"
+                      key={entry.token}
                       style={{
-                        padding: '18px 24px',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
+                        padding: '16px 24px',
+                        borderRadius: '16px',
+                        background: isFirst
+                          ? 'linear-gradient(90deg, rgba(245, 158, 11, 0.25) 0%, rgba(255, 255, 255, 0.05) 100%)'
+                          : 'rgba(255, 255, 255, 0.04)',
+                        border: isFirst
+                          ? '2px solid rgba(245, 158, 11, 0.6)'
+                          : '1px solid rgba(255, 255, 255, 0.08)',
+                        boxShadow: isFirst ? '0 0 30px rgba(245, 158, 11, 0.3)' : 'none',
+                        animation: 'pageEnter 0.4s ease forwards',
                       }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '18px' }}>
+                        {/* Rank Badge */}
                         <span
                           style={{
-                            width: '36px',
-                            height: '36px',
-                            borderRadius: '10px',
-                            background: idx === 0 ? '#f59e0b' : 'rgba(255,255,255,0.08)',
-                            color: idx === 0 ? '#0d0d1a' : 'white',
-                            fontWeight: 800,
+                            width: '40px',
+                            height: '40px',
+                            borderRadius: '12px',
+                            background: isFirst
+                              ? '#f59e0b'
+                              : idx === 1
+                              ? '#94a3b8'
+                              : idx === 2
+                              ? '#d97706'
+                              : 'rgba(255, 255, 255, 0.1)',
+                            color: isTopThree ? '#0d0d1a' : '#ffffff',
+                            fontWeight: 900,
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
+                            fontSize: '1.2rem',
                           }}
                         >
-                          #{idx + 1}
+                          {isFirst ? '👑' : idx + 1}
                         </span>
-                        <span style={{ fontSize: '1.2rem', fontWeight: 600 }}>{item}</span>
+
+                        {/* Avatar & Nickname */}
+                        <span style={{ fontSize: '1.8rem' }}>{entry.avatar}</span>
+                        <div>
+                          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#ffffff' }}>
+                            {entry.nickname}
+                          </div>
+                          {entry.streak > 1 && (
+                            <span style={{ fontSize: '0.8rem', color: '#f97316', fontWeight: 700 }}>
+                              🔥 {entry.streak} Streak!
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Score & Rank Change */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                        {entry.lastPoints > 0 && (
+                          <span
+                            style={{
+                              fontSize: '0.9rem',
+                              fontWeight: 800,
+                              color: '#22c55e',
+                              background: 'rgba(34, 197, 94, 0.15)',
+                              padding: '4px 10px',
+                              borderRadius: '8px',
+                            }}
+                          >
+                            +{entry.lastPoints}
+                          </span>
+                        )}
+
+                        {/* Rank Delta */}
+                        {typeof entry.rankChange === 'number' ? (
+                          entry.rankChange > 0 ? (
+                            <span style={{ color: '#22c55e', fontWeight: 800, fontSize: '0.9rem' }}>
+                              ▲ {entry.rankChange}
+                            </span>
+                          ) : entry.rankChange < 0 ? (
+                            <span style={{ color: '#ef4444', fontWeight: 800, fontSize: '0.9rem' }}>
+                              ▼ {Math.abs(entry.rankChange)}
+                            </span>
+                          ) : (
+                            <span style={{ color: 'var(--color-text-muted)', fontWeight: 800, fontSize: '0.9rem' }}>
+                              -
+                            </span>
+                          )
+                        ) : (
+                          <span style={{ color: '#38bdf8', fontWeight: 800, fontSize: '0.85rem' }}>NEW</span>
+                        )}
+
+                        <span style={{ fontSize: '1.6rem', fontWeight: 900, minWidth: '100px', textAlign: 'right' }}>
+                          {entry.score.toLocaleString()}
+                        </span>
                       </div>
                     </div>
-                  ))}
-                </div>
+                  );
+                })
               )}
+            </div>
 
-              {/* Live Q&A Stream */}
-              {activeSlide.type === 'qa' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {qaList.length === 0 ? (
-                    <div className="card" style={{ padding: '40px', textAlign: 'center' }}>
-                      <p style={{ color: 'var(--color-text-muted)', fontSize: '1.2rem' }}>
-                        No questions submitted yet. Audience can submit in real-time.
-                      </p>
+            {/* Advance Button */}
+            <div style={{ textAlign: 'center' }}>
+              {currentIndex < slides.length - 1 ? (
+                <button
+                  onClick={handleNextQuestion}
+                  className="btn btn--primary"
+                  style={{
+                    fontSize: '1.25rem',
+                    padding: '16px 40px',
+                    borderRadius: '100px',
+                    fontWeight: 800,
+                    boxShadow: '0 8px 30px rgba(124, 92, 252, 0.5)',
+                  }}
+                >
+                  Next Question ({currentIndex + 2}/{slides.length}) ➔
+                </button>
+              ) : (
+                <button
+                  onClick={handleShowFinalResults}
+                  className="btn btn--primary"
+                  style={{
+                    fontSize: '1.25rem',
+                    padding: '16px 48px',
+                    borderRadius: '100px',
+                    fontWeight: 800,
+                    background: 'linear-gradient(135deg, #f59e0b 0%, #ec4899 100%)',
+                    boxShadow: '0 8px 30px rgba(245, 158, 11, 0.5)',
+                  }}
+                >
+                  🎉 Final Podium & Results
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── 5. FINAL_RESULTS STATE (Olympic Podium & Confetti) ───────────── */}
+      {gameState === 'FINAL_RESULTS' && (
+        <div
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            padding: '40px 24px',
+            background: 'radial-gradient(ellipse at center, rgba(245, 158, 11, 0.2) 0%, rgba(13, 13, 26, 1) 70%)',
+            overflowY: 'auto',
+          }}
+        >
+          <div style={{ maxWidth: '900px', width: '100%', textAlign: 'center' }}>
+            <span
+              style={{
+                fontSize: '1rem',
+                fontWeight: 800,
+                color: '#f59e0b',
+                textTransform: 'uppercase',
+                letterSpacing: '0.15em',
+              }}
+            >
+              🎉 TOURNAMENT FINALE
+            </span>
+            <h1 style={{ fontSize: '3.5rem', fontWeight: 900, marginTop: '8px', marginBottom: '48px' }}>
+              Champions Podium
+            </h1>
+
+            {/* 3-Tier Olympic Podium */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-end',
+                justifyContent: 'center',
+                gap: '20px',
+                height: '380px',
+                marginBottom: '48px',
+              }}
+            >
+              {/* 2nd Place (Silver - Left) */}
+              <div
+                style={{
+                  flex: 1,
+                  maxWidth: '220px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                }}
+              >
+                {finalResults?.podium[1] ? (
+                  <>
+                    <span style={{ fontSize: '3rem', marginBottom: '6px' }}>{finalResults.podium[1].avatar}</span>
+                    <div style={{ fontWeight: 800, fontSize: '1.2rem', marginBottom: '4px' }}>
+                      {finalResults.podium[1].nickname}
                     </div>
-                  ) : (
-                    qaList
-                      .slice()
-                      .sort((a, b) => b.upvotes - a.upvotes)
-                      .map((q) => (
-                        <div
-                          key={q.id}
-                          className="card page-enter"
-                          style={{
-                            padding: '20px 24px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: '16px',
-                          }}
-                        >
-                          <span style={{ fontSize: '1.2rem', fontWeight: 600 }}>{q.text}</span>
-                          <span
-                            className="badge badge--primary"
-                            style={{ fontSize: '1rem', padding: '6px 14px' }}
-                          >
-                            ▲ {q.upvotes}
-                          </span>
-                        </div>
-                      ))
-                  )}
+                    <div style={{ fontWeight: 700, fontSize: '1rem', color: '#cbd5e1', marginBottom: '12px' }}>
+                      {finalResults.podium[1].score.toLocaleString()} pts
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ height: '80px' }} />
+                )}
+                <div
+                  style={{
+                    width: '100%',
+                    height: '180px',
+                    borderRadius: '16px 16px 0 0',
+                    background: 'linear-gradient(180deg, #94a3b8 0%, #475569 100%)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#ffffff',
+                    fontWeight: 900,
+                    fontSize: '2rem',
+                    boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
+                  }}
+                >
+                  🥈 2nd
                 </div>
-              )}
+              </div>
+
+              {/* 1st Place (Gold - Center, Tallest) */}
+              <div
+                style={{
+                  flex: 1.1,
+                  maxWidth: '260px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                }}
+              >
+                {finalResults?.podium[0] ? (
+                  <>
+                    <div style={{ fontSize: '2.5rem', marginBottom: '-8px' }}>👑</div>
+                    <span style={{ fontSize: '4rem', marginBottom: '6px' }}>{finalResults.podium[0].avatar}</span>
+                    <div style={{ fontWeight: 900, fontSize: '1.5rem', color: '#fbbf24', marginBottom: '4px' }}>
+                      {finalResults.podium[0].nickname}
+                    </div>
+                    <div style={{ fontWeight: 800, fontSize: '1.2rem', color: '#ffffff', marginBottom: '14px' }}>
+                      {finalResults.podium[0].score.toLocaleString()} pts
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ height: '110px' }} />
+                )}
+                <div
+                  style={{
+                    width: '100%',
+                    height: '250px',
+                    borderRadius: '20px 20px 0 0',
+                    background: 'linear-gradient(180deg, #fbbf24 0%, #b45309 100%)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#0d0d1a',
+                    fontWeight: 900,
+                    fontSize: '2.4rem',
+                    boxShadow: '0 0 50px rgba(251, 191, 36, 0.5)',
+                  }}
+                >
+                  🥇 1st
+                </div>
+              </div>
+
+              {/* 3rd Place (Bronze - Right) */}
+              <div
+                style={{
+                  flex: 1,
+                  maxWidth: '220px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                }}
+              >
+                {finalResults?.podium[2] ? (
+                  <>
+                    <span style={{ fontSize: '3rem', marginBottom: '6px' }}>{finalResults.podium[2].avatar}</span>
+                    <div style={{ fontWeight: 800, fontSize: '1.2rem', marginBottom: '4px' }}>
+                      {finalResults.podium[2].nickname}
+                    </div>
+                    <div style={{ fontWeight: 700, fontSize: '1rem', color: '#d97706', marginBottom: '12px' }}>
+                      {finalResults.podium[2].score.toLocaleString()} pts
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ height: '80px' }} />
+                )}
+                <div
+                  style={{
+                    width: '100%',
+                    height: '130px',
+                    borderRadius: '16px 16px 0 0',
+                    background: 'linear-gradient(180deg, #d97706 0%, #78350f 100%)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#ffffff',
+                    fontWeight: 900,
+                    fontSize: '1.8rem',
+                    boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
+                  }}
+                >
+                  🥉 3rd
+                </div>
+              </div>
             </div>
 
-            {/* Bottom Total Responses counter */}
-            <div style={{ marginTop: '24px', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.95rem' }}>
-              Total Responses: <strong style={{ color: 'var(--color-text-primary)' }}>{totalVotes}</strong>
+            {/* Exit / Return to Dashboard */}
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '36px' }}>
+              <button onClick={handleEndSession} className="btn btn--primary" style={{ padding: '14px 40px', fontSize: '1.1rem' }}>
+                End & Save Presentation
+              </button>
+              <Link href="/dashboard" className="btn btn--secondary" style={{ padding: '14px 28px', fontSize: '1.1rem' }}>
+                Dashboard
+              </Link>
             </div>
           </div>
-        ) : (
-          <div style={{ textAlign: 'center', padding: '60px 0' }}>
-            <h2>No slides in this presentation</h2>
-          </div>
-        )}
-      </div>
-
-      {/* Bottom Presenter Navigation Bar */}
-      <footer
-        style={{
-          borderTop: '1px solid var(--color-border)',
-          background: 'rgba(13, 13, 26, 0.95)',
-          padding: '14px 32px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        }}
-      >
-        <div style={{ display: 'flex', gap: '12px' }}>
-          <button
-            onClick={handlePrevSlide}
-            disabled={currentIndex <= 0}
-            className="btn btn--secondary"
-          >
-            ◀ Previous Slide
-          </button>
-          <button
-            onClick={handleNextSlide}
-            disabled={currentIndex >= slides.length - 1}
-            className="btn btn--primary"
-          >
-            Next Slide ▶
-          </button>
         </div>
-
-        {/* Slide quick picker */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>Jump to:</span>
-          <select
-            value={currentSlideId || ''}
-            onChange={(e) => handleGoToSlide(e.target.value)}
-            className="form-select"
-            style={{ width: 'auto', padding: '6px 12px', fontSize: '0.85rem' }}
-          >
-            {slides.map((s, idx) => (
-              <option key={s._id} value={s._id}>
-                {idx + 1}. {s.question.slice(0, 30)}
-              </option>
-            ))}
-          </select>
-        </div>
-      </footer>
+      )}
 
       {/* QR Code Modal */}
       {showQrModal && (

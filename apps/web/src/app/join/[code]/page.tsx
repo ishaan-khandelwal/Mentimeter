@@ -5,6 +5,13 @@ import { useParams, useRouter } from 'next/navigation';
 import { getSocket } from '@/lib/socket';
 import { getParticipantToken } from '@/lib/participant';
 import Link from 'next/link';
+import confetti from 'canvas-confetti';
+import type {
+  GameState,
+  QuestionTimerState,
+  GameStateChangedEvent,
+  ParticipantScoreEvent,
+} from '@pollwave/shared';
 
 type SlideType = 'multiple_choice' | 'word_cloud' | 'open_text' | 'rating_scale' | 'ranking' | 'qa';
 
@@ -25,6 +32,19 @@ interface QAItem {
   createdAt: number;
 }
 
+const AVATAR_OPTIONS = ['🦊', '🚀', '🦁', '⚡', '🦄', '🐼', '🎮', '🦉', '🐯', '🐙', '🌟', '🔥'];
+
+const RANDOM_NICKNAMES = [
+  'Swift Fox',
+  'Cosmic Owl',
+  'Neon Tiger',
+  'Pixel Panda',
+  'Turbo Lion',
+  'Hyper Falcon',
+  'Quantum Lynx',
+  'Star Voyager',
+];
+
 export default function AttendeeVotingPage() {
   const params = useParams();
   const router = useRouter();
@@ -36,6 +56,23 @@ export default function AttendeeVotingPage() {
   const [currentSlideId, setCurrentSlideId] = useState<string | null>(null);
   const [votingLocked, setVotingLocked] = useState(false);
   const [votedSlides, setVotedSlides] = useState<Record<string, boolean>>({});
+
+  // Nickname & Avatar Setup State
+  const [nickname, setNickname] = useState('');
+  const [avatar, setAvatar] = useState('🦊');
+  const [hasJoinedLobby, setHasJoinedLobby] = useState(false);
+
+  // Competition Game Loop State
+  const [gameState, setGameState] = useState<GameState>('LOBBY');
+  const [countdownNumber, setCountdownNumber] = useState<number>(3);
+  const [timerState, setTimerState] = useState<QuestionTimerState | null>(null);
+  const [remainingTime, setRemainingTime] = useState<number>(20);
+  const [participantScore, setParticipantScore] = useState<ParticipantScoreEvent | null>(null);
+  const [revealData, setRevealData] = useState<{
+    correctAnswer?: string | string[];
+    revealTally?: Record<string, number>;
+  } | null>(null);
+  const [mySubmittedAnswer, setMySubmittedAnswer] = useState<string | null>(null);
 
   // Slide specific form states
   const [selectedOptions, setSelectedOptions] = useState<string[]>([]);
@@ -52,6 +89,28 @@ export default function AttendeeVotingPage() {
     return typeof window !== 'undefined' ? getParticipantToken() : '';
   }, []);
 
+  // Initialize nickname and avatar from localStorage
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const savedNick = localStorage.getItem('pollwave_nickname');
+    const savedAvatar = localStorage.getItem('pollwave_avatar');
+
+    if (savedNick) {
+      setNickname(savedNick);
+      setHasJoinedLobby(true);
+    } else {
+      const randomNick = RANDOM_NICKNAMES[Math.floor(Math.random() * RANDOM_NICKNAMES.length)];
+      setNickname(randomNick);
+    }
+
+    if (savedAvatar) {
+      setAvatar(savedAvatar);
+    } else {
+      const randomAvatar = AVATAR_OPTIONS[Math.floor(Math.random() * AVATAR_OPTIONS.length)];
+      setAvatar(randomAvatar);
+    }
+  }, []);
+
   const activeSlide = slides.find((s) => s._id === currentSlideId) || null;
 
   // Initialize ranking options when active slide changes
@@ -59,13 +118,13 @@ export default function AttendeeVotingPage() {
     if (activeSlide?.type === 'ranking' && activeSlide.options) {
       setRankingList([...activeSlide.options]);
     }
-    // Reset selection when changing slides
     setSelectedOptions([]);
     setWordInput('');
     setOpenTextInput('');
     setRatingValue(null);
   }, [currentSlideId, activeSlide]);
 
+  // Connect to Socket.io
   useEffect(() => {
     if (!code || !participantToken) return;
 
@@ -79,23 +138,43 @@ export default function AttendeeVotingPage() {
         joinCode: code,
         participantToken,
       });
+
+      // Auto-join lobby if nickname already established
+      const savedNick = localStorage.getItem('pollwave_nickname') || nickname;
+      const savedAvatar = localStorage.getItem('pollwave_avatar') || avatar;
+      if (savedNick) {
+        socket.emit('join_lobby', {
+          joinCode: code,
+          participantToken,
+          nickname: savedNick,
+          avatar: savedAvatar,
+        });
+      }
     };
 
     const onSessionJoined = (data: {
       sessionId: string;
       currentSlideId: string | null;
       votingLocked: boolean;
+      gameState?: GameState;
       slides: Slide[];
     }) => {
       setStatus('connected');
       setSlides(data.slides);
       setCurrentSlideId(data.currentSlideId);
       setVotingLocked(data.votingLocked);
+      if (data.gameState) setGameState(data.gameState);
+    };
+
+    const onLobbyJoined = (data: { state: GameState }) => {
+      setHasJoinedLobby(true);
+      if (data.state) setGameState(data.state);
     };
 
     const onSlideChanged = (data: { currentSlideId: string; votingLocked: boolean }) => {
       setCurrentSlideId(data.currentSlideId);
       setVotingLocked(data.votingLocked);
+      setMySubmittedAnswer(null);
     };
 
     const onVotingLocked = (data: { locked: boolean }) => {
@@ -108,6 +187,30 @@ export default function AttendeeVotingPage() {
 
     const onQuestionUpdate = (data: { questions: QAItem[] }) => {
       setQaQuestions(data.questions || []);
+    };
+
+    // Quiz Game Loop Events
+    const onGameStateChanged = (data: GameStateChangedEvent) => {
+      setGameState(data.state);
+      if (data.countdown !== undefined) setCountdownNumber(data.countdown);
+      if (data.slideId) setCurrentSlideId(data.slideId);
+      if (data.timer) {
+        setTimerState(data.timer);
+        setRemainingTime(data.timer.durationSeconds);
+      }
+      if (data.state === 'COUNTDOWN' || data.state === 'QUESTION_ACTIVE') {
+        setMySubmittedAnswer(null);
+      }
+      if (data.state === 'REVEAL') {
+        setRevealData({
+          correctAnswer: data.correctAnswer,
+          revealTally: data.revealTally,
+        });
+      }
+    };
+
+    const onParticipantScore = (data: ParticipantScoreEvent) => {
+      setParticipantScore(data);
     };
 
     const onError = (data: { code: string; message: string }) => {
@@ -127,10 +230,13 @@ export default function AttendeeVotingPage() {
 
     socket.on('connect', onConnect);
     socket.on('session_joined', onSessionJoined);
+    socket.on('lobby_joined', onLobbyJoined);
     socket.on('slide_changed', onSlideChanged);
     socket.on('voting_locked', onVotingLocked);
     socket.on('session_ended', onSessionEnded);
     socket.on('question_update', onQuestionUpdate);
+    socket.on('game_state_changed', onGameStateChanged);
+    socket.on('participant_score', onParticipantScore);
     socket.on('error', onError);
 
     if (socket.connected) {
@@ -140,13 +246,60 @@ export default function AttendeeVotingPage() {
     return () => {
       socket.off('connect', onConnect);
       socket.off('session_joined', onSessionJoined);
+      socket.off('lobby_joined', onLobbyJoined);
       socket.off('slide_changed', onSlideChanged);
       socket.off('voting_locked', onVotingLocked);
       socket.off('session_ended', onSessionEnded);
       socket.off('question_update', onQuestionUpdate);
+      socket.off('game_state_changed', onGameStateChanged);
+      socket.off('participant_score', onParticipantScore);
       socket.off('error', onError);
     };
-  }, [code, participantToken]);
+  }, [code, participantToken, nickname, avatar]);
+
+  // Question timer countdown effect
+  useEffect(() => {
+    if (gameState !== 'QUESTION_ACTIVE' || !timerState) return;
+
+    const interval = setInterval(() => {
+      const elapsed = (Date.now() - timerState.questionStartedAt) / 1000;
+      const left = Math.max(0, timerState.durationSeconds - elapsed);
+      setRemainingTime(Math.ceil(left));
+    }, 200);
+
+    return () => clearInterval(interval);
+  }, [gameState, timerState]);
+
+  // Final Results Confetti on Attendee Phone
+  useEffect(() => {
+    if (gameState === 'FINAL_RESULTS') {
+      confetti({
+        particleCount: 120,
+        spread: 80,
+        origin: { y: 0.6 },
+      });
+    }
+  }, [gameState]);
+
+  // Attendee confirms Nickname & Avatar
+  const handleJoinLobby = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!nickname.trim()) return;
+
+    const cleanNick = nickname.trim().slice(0, 20);
+    localStorage.setItem('pollwave_nickname', cleanNick);
+    localStorage.setItem('pollwave_avatar', avatar);
+
+    const socket = getSocket();
+    socket.emit('join_lobby', {
+      joinCode: code,
+      participantToken,
+      nickname: cleanNick,
+      avatar,
+    });
+
+    setHasJoinedLobby(true);
+  };
 
   // Submit generic vote
   const submitVote = useCallback(
@@ -158,35 +311,24 @@ export default function AttendeeVotingPage() {
         value,
         participantToken,
       });
+
+      setMySubmittedAnswer(String(value));
       setVotedSlides((prev) => ({ ...prev, [currentSlideId]: true }));
     },
-    [currentSlideId, votingLocked, participantToken, votedSlides],
+    [currentSlideId, votingLocked, votedSlides, participantToken]
   );
 
-  // Submit Multiple Choice
-  const handleMultipleChoiceSubmit = (opt: string) => {
-    if (votingLocked || hasVotedCurrent) return;
-    const isMulti = activeSlide?.config?.allowMultiple;
-    if (isMulti) {
-      const next = selectedOptions.includes(opt)
-        ? selectedOptions.filter((o) => o !== opt)
-        : [...selectedOptions, opt];
-      setSelectedOptions(next);
-      submitVote(next);
-    } else {
-      setSelectedOptions([opt]);
-      submitVote(opt);
-    }
-  };
-
-  // Submit Word Cloud
-  const handleWordCloudSubmit = (e: React.FormEvent) => {
+  // Submit Word Cloud word
+  const handleWordSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const word = wordInput.trim();
-    if (!word) return;
+    if (!wordInput.trim()) return;
 
-    submitVote(word);
-    setSubmittedWords((prev) => [...prev, word]);
+    const maxEntries = activeSlide?.config?.maxEntries || 3;
+    if (submittedWords.length >= maxEntries) return;
+
+    const clean = wordInput.trim().slice(0, 30);
+    submitVote(clean);
+    setSubmittedWords((prev) => [...prev, clean]);
     setWordInput('');
   };
 
@@ -194,7 +336,8 @@ export default function AttendeeVotingPage() {
   const handleOpenTextSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!openTextInput.trim()) return;
-    submitVote(openTextInput.trim());
+    submitVote(openTextInput.trim().slice(0, 250));
+    setOpenTextInput('');
   };
 
   // Submit Rating Scale
@@ -240,9 +383,19 @@ export default function AttendeeVotingPage() {
     });
     setUpvotedQuestions((prev) => ({ ...prev, [questionId]: true }));
     setQaQuestions((prev) =>
-      prev.map((q) => (q.id === questionId ? { ...q, upvotes: q.upvotes + 1 } : q)),
+      prev.map((q) => (q.id === questionId ? { ...q, upvotes: q.upvotes + 1 } : q))
     );
   };
+
+  // Option colors for Kahoot / Mentimeter mobile buttons
+  const optionColors = [
+    { bg: '#ef4444', text: '#ffffff', symbol: '▲' },
+    { bg: '#3b82f6', text: '#ffffff', symbol: '◆' },
+    { bg: '#f59e0b', text: '#ffffff', symbol: '●' },
+    { bg: '#10b981', text: '#ffffff', symbol: '■' },
+    { bg: '#8b5cf6', text: '#ffffff', symbol: '★' },
+    { bg: '#ec4899', text: '#ffffff', symbol: '✦' },
+  ];
 
   if (status === 'connecting') {
     return (
@@ -294,22 +447,383 @@ export default function AttendeeVotingPage() {
     );
   }
 
+  // ─── STEP 1: Nickname & Emoji Avatar Picker ─────────────────────────────
+  if (!hasJoinedLobby) {
+    return (
+      <div className="attendee-screen" style={{ justifyContent: 'center', alignItems: 'center', padding: '24px' }}>
+        <div className="card" style={{ maxWidth: '420px', width: '100%', padding: '32px', textAlign: 'center' }}>
+          <div style={{ fontSize: '3rem', marginBottom: '8px' }}>{avatar}</div>
+          <h2 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '6px' }}>Choose Your Avatar</h2>
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', marginBottom: '24px' }}>
+            Pick an emoji and nickname to enter the quiz room.
+          </p>
+
+          {/* Avatar selector pills */}
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              justifyContent: 'center',
+              gap: '10px',
+              marginBottom: '24px',
+            }}
+          >
+            {AVATAR_OPTIONS.map((em) => (
+              <button
+                key={em}
+                type="button"
+                onClick={() => setAvatar(em)}
+                style={{
+                  fontSize: '1.6rem',
+                  padding: '8px 12px',
+                  borderRadius: '12px',
+                  border: avatar === em ? '2px solid #7c5cfc' : '1px solid rgba(255, 255, 255, 0.1)',
+                  background: avatar === em ? 'rgba(124, 92, 252, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                  cursor: 'pointer',
+                  transform: avatar === em ? 'scale(1.15)' : 'scale(1)',
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                {em}
+              </button>
+            ))}
+          </div>
+
+          <form onSubmit={handleJoinLobby}>
+            <div className="form-group" style={{ marginBottom: '20px' }}>
+              <label className="form-label" style={{ textAlign: 'left' }}>Your Nickname</label>
+              <input
+                type="text"
+                value={nickname}
+                onChange={(e) => setNickname(e.target.value)}
+                placeholder="Enter player nickname"
+                maxLength={20}
+                required
+                className="form-input"
+                style={{ fontSize: '1.1rem', fontWeight: 700, textAlign: 'center' }}
+              />
+            </div>
+
+            <button type="submit" className="btn btn--primary btn--full" style={{ padding: '14px', fontSize: '1.1rem', fontWeight: 800 }}>
+              Join Game ➔
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── STEP 2: Waiting Room Lobby Screen ──────────────────────────────────
+  if (gameState === 'LOBBY') {
+    return (
+      <div className="attendee-screen" style={{ justifyContent: 'center', alignItems: 'center', padding: '24px' }}>
+        <div className="card" style={{ maxWidth: '420px', width: '100%', padding: '36px', textAlign: 'center' }}>
+          <div
+            style={{
+              width: '100px',
+              height: '100px',
+              borderRadius: '50%',
+              background: 'linear-gradient(135deg, rgba(124, 92, 252, 0.3) 0%, rgba(236, 72, 153, 0.3) 100%)',
+              border: '3px solid #7c5cfc',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '3.5rem',
+              margin: '0 auto 20px',
+              boxShadow: '0 0 30px rgba(124, 92, 252, 0.4)',
+            }}
+          >
+            {avatar}
+          </div>
+
+          <h2 style={{ fontSize: '1.7rem', fontWeight: 800, marginBottom: '6px' }}>{nickname}</h2>
+          <div
+            style={{
+              display: 'inline-block',
+              padding: '4px 14px',
+              borderRadius: '100px',
+              background: 'rgba(34, 197, 94, 0.2)',
+              color: '#4ade80',
+              fontWeight: 800,
+              fontSize: '0.85rem',
+              marginBottom: '20px',
+            }}
+          >
+            ✓ YOU&apos;RE IN THE LOBBY
+          </div>
+
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '1rem', lineHeight: 1.5, marginBottom: '24px' }}>
+            Look at the host screen! The quiz will begin as soon as the presenter starts it.
+          </p>
+
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              color: 'var(--color-text-muted)',
+              fontSize: '0.85rem',
+            }}
+          >
+            <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: '#22c55e' }} />
+            Ready for Question 1
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── STEP 3: Countdown Screen (3... 2... 1...) ──────────────────────────
+  if (gameState === 'COUNTDOWN') {
+    return (
+      <div className="attendee-screen" style={{ justifyContent: 'center', alignItems: 'center', padding: '24px' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div
+            style={{
+              width: '140px',
+              height: '140px',
+              borderRadius: '50%',
+              background: 'linear-gradient(135deg, #ec4899 0%, #7c5cfc 100%)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '5rem',
+              fontWeight: 900,
+              color: '#ffffff',
+              boxShadow: '0 0 50px rgba(236, 72, 153, 0.5)',
+              margin: '0 auto 24px',
+            }}
+          >
+            {countdownNumber}
+          </div>
+          <h2 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '8px' }}>Get Ready!</h2>
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '1.05rem' }}>
+            Answer quickly for bonus speed points!
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── STEP 4: Reveal Screen ──────────────────────────────────────────────
+  if (gameState === 'REVEAL') {
+    const isCorrect = participantScore?.isCorrect ?? false;
+
+    return (
+      <div className="attendee-screen" style={{ justifyContent: 'center', alignItems: 'center', padding: '24px' }}>
+        <div
+          className="card"
+          style={{
+            maxWidth: '440px',
+            width: '100%',
+            padding: '36px',
+            textAlign: 'center',
+            border: isCorrect ? '2px solid #22c55e' : '2px solid #ef4444',
+            background: isCorrect ? 'rgba(34, 197, 94, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+          }}
+        >
+          <div style={{ fontSize: '4rem', marginBottom: '12px' }}>
+            {isCorrect ? '🎉' : '❌'}
+          </div>
+
+          <h2 style={{ fontSize: '2rem', fontWeight: 900, color: isCorrect ? '#4ade80' : '#f87171', marginBottom: '6px' }}>
+            {isCorrect ? 'CORRECT!' : 'NOT QUITE!'}
+          </h2>
+
+          {isCorrect ? (
+            <div style={{ margin: '16px 0 24px' }}>
+              <div
+                style={{
+                  fontSize: '2.5rem',
+                  fontWeight: 900,
+                  color: '#ffffff',
+                }}
+              >
+                +{participantScore?.pointsEarned || 0} pts
+              </div>
+              {participantScore && participantScore.streak > 1 && (
+                <div style={{ color: '#f97316', fontWeight: 800, fontSize: '1rem', marginTop: '6px' }}>
+                  🔥 {participantScore.streak} Answer Streak! (+{(Math.min(participantScore.streak * 10, 50))}% Bonus)
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ color: 'var(--color-text-secondary)', margin: '14px 0 20px', fontSize: '1rem' }}>
+              Keep going! More points coming up next.
+            </div>
+          )}
+
+          {revealData?.correctAnswer && (
+            <div
+              style={{
+                background: 'rgba(255, 255, 255, 0.04)',
+                borderRadius: '12px',
+                padding: '12px',
+                marginBottom: '20px',
+                fontSize: '0.95rem',
+              }}
+            >
+              <span style={{ color: 'var(--color-text-muted)' }}>Correct Answer: </span>
+              <strong style={{ color: '#4ade80' }}>
+                {Array.isArray(revealData.correctAnswer)
+                  ? revealData.correctAnswer.join(', ')
+                  : revealData.correctAnswer}
+              </strong>
+            </div>
+          )}
+
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-around',
+              background: 'rgba(255, 255, 255, 0.04)',
+              borderRadius: '14px',
+              padding: '14px',
+            }}
+          >
+            <div>
+              <div style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>Total Score</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 900 }}>
+                {participantScore?.totalScore?.toLocaleString() || 0}
+              </div>
+            </div>
+            <div>
+              <div style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>Current Rank</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#fbbf24' }}>
+                #{participantScore?.rank || '-'}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── STEP 5: Leaderboard Screen ─────────────────────────────────────────
+  if (gameState === 'LEADERBOARD') {
+    return (
+      <div className="attendee-screen" style={{ justifyContent: 'center', alignItems: 'center', padding: '24px' }}>
+        <div className="card" style={{ maxWidth: '420px', width: '100%', padding: '36px', textAlign: 'center' }}>
+          <div style={{ fontSize: '3rem', marginBottom: '8px' }}>🏆</div>
+          <h2 style={{ fontSize: '1.8rem', fontWeight: 900, marginBottom: '6px' }}>Leaderboard</h2>
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.95rem', marginBottom: '24px' }}>
+            Look at the host screen for full standings!
+          </p>
+
+          <div
+            style={{
+              background: 'rgba(255, 255, 255, 0.05)',
+              borderRadius: '16px',
+              padding: '20px',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              marginBottom: '24px',
+            }}
+          >
+            <div style={{ fontSize: '2.5rem', marginBottom: '4px' }}>{avatar}</div>
+            <div style={{ fontSize: '1.3rem', fontWeight: 800, color: '#ffffff' }}>{nickname}</div>
+            <div style={{ fontSize: '2.2rem', fontWeight: 900, color: '#fbbf24', marginTop: '10px' }}>
+              Rank #{participantScore?.rank || '-'}
+            </div>
+            <div style={{ color: 'var(--color-text-muted)', fontSize: '0.95rem' }}>
+              {participantScore?.totalScore?.toLocaleString() || 0} total points
+            </div>
+          </div>
+
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>
+            Waiting for next question...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── STEP 6: Final Results Screen ───────────────────────────────────────
+  if (gameState === 'FINAL_RESULTS') {
+    return (
+      <div className="attendee-screen" style={{ justifyContent: 'center', alignItems: 'center', padding: '24px' }}>
+        <div
+          className="card"
+          style={{
+            maxWidth: '440px',
+            width: '100%',
+            padding: '40px',
+            textAlign: 'center',
+            background: 'linear-gradient(180deg, rgba(245, 158, 11, 0.15) 0%, rgba(13, 13, 26, 0.95) 100%)',
+            border: '2px solid rgba(245, 158, 11, 0.4)',
+          }}
+        >
+          <div style={{ fontSize: '4rem', marginBottom: '8px' }}>🎉</div>
+          <h2 style={{ fontSize: '2.2rem', fontWeight: 900, color: '#fbbf24', marginBottom: '4px' }}>
+            Game Finished!
+          </h2>
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.95rem', marginBottom: '28px' }}>
+            Congratulations on completing the quiz challenge!
+          </p>
+
+          <div
+            style={{
+              background: 'rgba(255, 255, 255, 0.05)',
+              borderRadius: '20px',
+              padding: '24px',
+              marginBottom: '28px',
+            }}
+          >
+            <div style={{ fontSize: '3rem', marginBottom: '4px' }}>{avatar}</div>
+            <div style={{ fontSize: '1.4rem', fontWeight: 800 }}>{nickname}</div>
+            <div style={{ fontSize: '3rem', fontWeight: 900, color: '#fbbf24', margin: '8px 0' }}>
+              #{participantScore?.rank || 1}
+            </div>
+            <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#ffffff' }}>
+              {participantScore?.totalScore?.toLocaleString() || 0} Points
+            </div>
+          </div>
+
+          <Link href="/" className="btn btn--primary btn--full" style={{ padding: '14px' }}>
+            Back to Home
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── STEP 7: Question Active & Question Locked ──────────────────────────
   const hasVotedCurrent = currentSlideId ? votedSlides[currentSlideId] : false;
 
   return (
     <div className="attendee-screen">
       {/* Top Header */}
-      <header className="attendee-header" style={{ justifyContent: 'space-between' }}>
+      <header className="attendee-header" style={{ justifyContent: 'space-between', padding: '12px 20px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span className="brand-icon" style={{ fontSize: '1.2rem' }}>⚡</span>
-          <span style={{ fontWeight: 800, fontSize: '1rem' }}>PollWave</span>
+          <span style={{ fontSize: '1.4rem' }}>{avatar}</span>
+          <span style={{ fontWeight: 800, fontSize: '0.95rem' }}>{nickname}</span>
         </div>
-        <span className="badge badge--primary">Code: {code}</span>
+
+        {/* Live Timer Pill */}
+        {gameState === 'QUESTION_ACTIVE' && (
+          <div
+            style={{
+              padding: '4px 12px',
+              borderRadius: '100px',
+              background: remainingTime <= 5 ? 'rgba(239, 68, 68, 0.2)' : 'rgba(124, 92, 252, 0.2)',
+              border: remainingTime <= 5 ? '1px solid #ef4444' : '1px solid #7c5cfc',
+              color: remainingTime <= 5 ? '#f87171' : '#c4b5fd',
+              fontWeight: 800,
+              fontSize: '0.85rem',
+            }}
+          >
+            ⏱️ {remainingTime}s left
+          </div>
+        )}
+
+        {gameState === 'QUESTION_LOCKED' && (
+          <span className="badge badge--danger">🔒 Locked</span>
+        )}
       </header>
 
       {/* Main Content Area */}
-      <div className="attendee-content">
-        {votingLocked && (
+      <div className="attendee-content" style={{ padding: '20px' }}>
+        {gameState === 'QUESTION_LOCKED' && (
           <div
             className="auth-alert"
             style={{
@@ -318,283 +832,197 @@ export default function AttendeeVotingPage() {
               background: 'rgba(245, 158, 11, 0.15)',
               border: '1px solid rgba(245, 158, 11, 0.3)',
               color: '#fde68a',
-              justifyContent: 'center',
+              textAlign: 'center',
             }}
           >
-            🔒 Voting is currently locked by the presenter
+            🔒 Time&apos;s up! Waiting for the presenter to reveal results...
           </div>
         )}
 
         {activeSlide ? (
-          <div style={{ width: '100%' }} className="page-enter">
-            {/* Question Title */}
+          <div style={{ width: '100%', maxWidth: '520px', margin: '0 auto' }}>
             <h1
               style={{
-                fontSize: '1.6rem',
+                fontSize: '1.4rem',
                 fontWeight: 800,
                 textAlign: 'center',
-                marginBottom: '28px',
-                lineHeight: 1.3,
+                marginBottom: '24px',
+                lineHeight: 1.35,
               }}
             >
               {activeSlide.question}
             </h1>
 
-            {/* Slide Type: Multiple Choice */}
+            {/* Multiple Choice Mobile Buttons (Kahoot / Mentimeter Grid) */}
             {activeSlide.type === 'multiple_choice' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {(activeSlide.options || []).map((opt, i) => {
-                  const isSelected = selectedOptions.includes(opt);
-                  return (
-                    <button
-                      key={i}
-                      onClick={() => handleMultipleChoiceSubmit(opt)}
-                      disabled={votingLocked || hasVotedCurrent}
-                      className="card card--hover"
-                      style={{
-                        padding: '18px 24px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '16px',
-                        textAlign: 'left',
-                        border: isSelected
-                          ? '2px solid var(--color-primary)'
-                          : '1px solid var(--color-border)',
-                        background: isSelected
-                          ? 'rgba(124, 92, 252, 0.2)'
-                          : 'rgba(255, 255, 255, 0.04)',
-                        color: 'var(--color-text-primary)',
-                        fontSize: '1.05rem',
-                        fontWeight: 600,
-                        cursor: votingLocked || hasVotedCurrent ? 'not-allowed' : 'pointer',
-                        borderRadius: '12px',
-                        transition: 'all 0.15s ease',
-                        opacity: hasVotedCurrent && !isSelected ? 0.6 : 1,
-                      }}
-                    >
-                      <span
-                        style={{
-                          width: '32px',
-                          height: '32px',
-                          borderRadius: '8px',
-                          background: isSelected ? 'var(--color-primary)' : 'rgba(255,255,255,0.08)',
-                          color: 'white',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontWeight: 700,
-                          fontSize: '0.9rem',
-                          flexShrink: 0,
-                        }}
-                      >
-                        {String.fromCharCode(65 + i)}
-                      </span>
-                      <span>{opt}</span>
-                    </button>
-                  );
-                })}
-
-                {hasVotedCurrent && (
+              <div>
+                {hasVotedCurrent ? (
                   <div
+                    className="card page-enter"
                     style={{
+                      padding: '36px',
                       textAlign: 'center',
-                      padding: '14px 20px',
-                      background: 'rgba(34, 197, 94, 0.12)',
-                      border: '1px solid rgba(34, 197, 94, 0.3)',
-                      borderRadius: '12px',
-                      color: '#86efac',
-                      fontWeight: 600,
-                      marginTop: '8px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
+                      background: 'rgba(34, 197, 94, 0.1)',
+                      border: '2px solid rgba(34, 197, 94, 0.4)',
                     }}
                   >
-                    <span>✓</span>
-                    <span>Vote recorded! Waiting for presenter...</span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Slide Type: Word Cloud */}
-            {activeSlide.type === 'word_cloud' && (
-              <div className="card" style={{ padding: '28px' }}>
-                <form onSubmit={handleWordCloudSubmit}>
-                  <div className="form-group" style={{ marginBottom: '16px' }}>
-                    <input
-                      type="text"
-                      maxLength={30}
-                      value={wordInput}
-                      onChange={(e) => setWordInput(e.target.value)}
-                      placeholder="Type your word..."
-                      className="form-input"
-                      disabled={votingLocked}
-                      style={{ fontSize: '1.1rem', textAlign: 'center', padding: '16px' }}
-                      autoFocus
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={votingLocked || !wordInput.trim()}
-                    className="btn btn--primary btn--full btn--lg"
-                  >
-                    Submit Word
-                  </button>
-                </form>
-
-                {submittedWords.length > 0 && (
-                  <div style={{ marginTop: '20px', textAlign: 'center' }}>
-                    <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
-                      Your submissions:
-                    </span>
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center', marginTop: '8px' }}>
-                      {submittedWords.map((w, idx) => (
-                        <span key={idx} className="badge badge--primary">
-                          {w}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Slide Type: Open Text */}
-            {activeSlide.type === 'open_text' && (
-              <div className="card" style={{ padding: '28px' }}>
-                {hasVotedCurrent ? (
-                  <div style={{ textAlign: 'center', padding: '20px 0' }}>
-                    <div style={{ fontSize: '2.5rem', marginBottom: '8px' }}>✓</div>
-                    <h3 style={{ fontSize: '1.2rem', marginBottom: '4px' }}>Response Submitted!</h3>
-                    <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem' }}>
-                      Your thoughts have been shared with the presenter.
+                    <div style={{ fontSize: '3rem', marginBottom: '12px' }}>✓</div>
+                    <h3 style={{ fontSize: '1.4rem', fontWeight: 800, color: '#4ade80', marginBottom: '8px' }}>
+                      Answer Submitted!
+                    </h3>
+                    <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.95rem' }}>
+                      You selected: <strong style={{ color: '#ffffff' }}>{mySubmittedAnswer}</strong>
+                    </p>
+                    <p style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem', marginTop: '12px' }}>
+                      Waiting for presenter to reveal correct answer...
                     </p>
                   </div>
                 ) : (
-                  <form onSubmit={handleOpenTextSubmit}>
-                    <div className="form-group" style={{ marginBottom: '16px' }}>
-                      <textarea
-                        rows={4}
-                        maxLength={500}
-                        value={openTextInput}
-                        onChange={(e) => setOpenTextInput(e.target.value)}
-                        placeholder="Write your thoughts here..."
-                        className="form-textarea"
-                        disabled={votingLocked}
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      disabled={votingLocked || !openTextInput.trim()}
-                      className="btn btn--primary btn--full btn--lg"
-                    >
-                      Send Feedback
-                    </button>
-                  </form>
-                )}
-              </div>
-            )}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '14px' }}>
+                    {(activeSlide.options || []).map((opt, i) => {
+                      const colorScheme = optionColors[i % optionColors.length];
 
-            {/* Slide Type: Rating Scale */}
-            {activeSlide.type === 'rating_scale' && (
-              <div className="card" style={{ padding: '32px', textAlign: 'center' }}>
-                <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '24px' }}>
-                  {Array.from({ length: activeSlide.config?.max || 5 }).map((_, idx) => {
-                    const score = idx + 1;
-                    const isSelected = ratingValue === score;
-                    return (
-                      <button
-                        key={score}
-                        onClick={() => handleRatingSubmit(score)}
-                        disabled={votingLocked || hasVotedCurrent}
-                        style={{
-                          width: '52px',
-                          height: '52px',
-                          borderRadius: '12px',
-                          background: isSelected ? 'var(--gradient-primary)' : 'rgba(255,255,255,0.06)',
-                          border: isSelected ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
-                          color: 'white',
-                          fontSize: '1.25rem',
-                          fontWeight: 700,
-                          cursor: votingLocked || hasVotedCurrent ? 'not-allowed' : 'pointer',
-                          transition: 'all 0.15s ease',
-                          opacity: hasVotedCurrent && !isSelected ? 0.6 : 1,
-                        }}
-                      >
-                        {score}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
-                  <span>{activeSlide.config?.lowLabel || 'Poor'}</span>
-                  <span>{activeSlide.config?.highLabel || 'Excellent'}</span>
-                </div>
-
-                {hasVotedCurrent && (
-                  <div
-                    style={{
-                      textAlign: 'center',
-                      padding: '12px 16px',
-                      background: 'rgba(34, 197, 94, 0.12)',
-                      border: '1px solid rgba(34, 197, 94, 0.3)',
-                      borderRadius: '12px',
-                      color: '#86efac',
-                      fontWeight: 600,
-                      marginTop: '16px',
-                    }}
-                  >
-                    ✓ Rating submitted! Waiting for presenter...
+                      return (
+                        <button
+                          key={opt}
+                          type="button"
+                          onClick={() => submitVote(opt)}
+                          disabled={votingLocked || gameState === 'QUESTION_LOCKED'}
+                          style={{
+                            background: colorScheme.bg,
+                            color: colorScheme.text,
+                            border: 'none',
+                            borderRadius: '16px',
+                            padding: '20px 24px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '16px',
+                            fontSize: '1.25rem',
+                            fontWeight: 800,
+                            cursor: 'pointer',
+                            boxShadow: '0 6px 20px rgba(0,0,0,0.25)',
+                            transition: 'transform 0.15s ease, filter 0.15s ease',
+                            opacity: votingLocked || gameState === 'QUESTION_LOCKED' ? 0.6 : 1,
+                            textAlign: 'left',
+                          }}
+                        >
+                          <span
+                            style={{
+                              width: '36px',
+                              height: '36px',
+                              borderRadius: '8px',
+                              background: 'rgba(0,0,0,0.2)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: '1.2rem',
+                            }}
+                          >
+                            {colorScheme.symbol}
+                          </span>
+                          <span style={{ flex: 1 }}>{opt}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
             )}
 
-            {/* Slide Type: Ranking */}
+            {/* Word Cloud Input */}
+            {activeSlide.type === 'word_cloud' && (
+              <div>
+                <form onSubmit={handleWordSubmit} style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
+                  <input
+                    type="text"
+                    value={wordInput}
+                    onChange={(e) => setWordInput(e.target.value)}
+                    placeholder="Type a word..."
+                    maxLength={30}
+                    disabled={votingLocked}
+                    className="form-input"
+                  />
+                  <button type="submit" disabled={votingLocked || !wordInput.trim()} className="btn btn--primary">
+                    Send
+                  </button>
+                </form>
+                {submittedWords.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                    {submittedWords.map((w, idx) => (
+                      <span key={idx} className="badge badge--primary">
+                        ✓ {w}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Open Text Input */}
+            {activeSlide.type === 'open_text' && (
+              <form onSubmit={handleOpenTextSubmit}>
+                <textarea
+                  value={openTextInput}
+                  onChange={(e) => setOpenTextInput(e.target.value)}
+                  placeholder="Share your thoughts..."
+                  rows={4}
+                  maxLength={250}
+                  disabled={votingLocked}
+                  className="form-input"
+                  style={{ marginBottom: '16px', resize: 'vertical' }}
+                />
+                <button type="submit" disabled={votingLocked || !openTextInput.trim()} className="btn btn--primary btn--full">
+                  Submit Response
+                </button>
+              </form>
+            )}
+
+            {/* Rating Scale */}
+            {activeSlide.type === 'rating_scale' && (
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '12px' }}>
+                {Array.from({ length: activeSlide.config?.max || 5 }).map((_, idx) => {
+                  const score = idx + 1;
+                  return (
+                    <button
+                      key={score}
+                      type="button"
+                      onClick={() => handleRatingSubmit(score)}
+                      disabled={votingLocked || hasVotedCurrent}
+                      className={`btn ${ratingValue === score ? 'btn--primary' : 'btn--secondary'}`}
+                      style={{ width: '48px', height: '48px', borderRadius: '12px', fontSize: '1.2rem', fontWeight: 800 }}
+                    >
+                      {score}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Ranking */}
             {activeSlide.type === 'ranking' && (
-              <div className="card" style={{ padding: '24px' }}>
-                <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.85rem', marginBottom: '16px', textAlign: 'center' }}>
-                  Use arrows to order items by your preference (top = highest).
-                </p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' }}>
+              <div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
                   {rankingList.map((item, idx) => (
                     <div
                       key={item}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '12px 16px',
-                        borderRadius: '8px',
-                        background: 'rgba(255,255,255,0.05)',
-                        border: '1px solid var(--color-border)',
-                      }}
+                      className="card"
+                      style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <span style={{ fontWeight: 700, color: 'var(--color-primary-light)' }}>
-                          #{idx + 1}
-                        </span>
-                        <span style={{ fontWeight: 600 }}>{item}</span>
-                      </div>
-                      <div style={{ display: 'flex', gap: '6px' }}>
+                      <span>#{idx + 1} {item}</span>
+                      <div style={{ display: 'flex', gap: '4px' }}>
                         <button
                           type="button"
                           onClick={() => moveRankItem(idx, 'up')}
-                          disabled={idx === 0 || votingLocked}
+                          disabled={idx === 0 || hasVotedCurrent}
                           className="btn btn--ghost btn--sm"
-                          style={{ padding: '4px 8px' }}
                         >
                           ▲
                         </button>
                         <button
                           type="button"
                           onClick={() => moveRankItem(idx, 'down')}
-                          disabled={idx === rankingList.length - 1 || votingLocked}
+                          disabled={idx === rankingList.length - 1 || hasVotedCurrent}
                           className="btn btn--ghost btn--sm"
-                          style={{ padding: '4px 8px' }}
                         >
                           ▼
                         </button>
@@ -602,114 +1030,56 @@ export default function AttendeeVotingPage() {
                     </div>
                   ))}
                 </div>
-
-                <button
-                  onClick={handleRankingSubmit}
-                  disabled={votingLocked}
-                  className="btn btn--primary btn--full btn--lg"
-                >
-                  Submit Ranking
-                </button>
+                {!hasVotedCurrent && (
+                  <button onClick={handleRankingSubmit} disabled={votingLocked} className="btn btn--primary btn--full">
+                    Submit Ranking
+                  </button>
+                )}
               </div>
             )}
 
-            {/* Slide Type: Q&A */}
+            {/* Live Q&A */}
             {activeSlide.type === 'qa' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                <div className="card" style={{ padding: '24px' }}>
-                  <form onSubmit={handleQuestionSubmit}>
-                    <div className="form-group" style={{ marginBottom: '12px' }}>
-                      <input
-                        type="text"
-                        maxLength={200}
-                        value={newQuestionText}
-                        onChange={(e) => setNewQuestionText(e.target.value)}
-                        placeholder="Ask a question..."
-                        className="form-input"
-                        disabled={votingLocked}
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      disabled={votingLocked || !newQuestionText.trim()}
-                      className="btn btn--primary btn--full"
-                    >
-                      Submit Question
-                    </button>
-                  </form>
-                </div>
+              <div>
+                <form onSubmit={handleQuestionSubmit} style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
+                  <input
+                    type="text"
+                    value={newQuestionText}
+                    onChange={(e) => setNewQuestionText(e.target.value)}
+                    placeholder="Ask a question..."
+                    maxLength={300}
+                    className="form-input"
+                  />
+                  <button type="submit" disabled={!newQuestionText.trim()} className="btn btn--primary">
+                    Ask
+                  </button>
+                </form>
 
-                {/* Questions List */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {qaQuestions.map((q) => {
-                    const isUpvoted = upvotedQuestions[q.id];
-                    return (
-                      <div
-                        key={q.id}
-                        className="card"
-                        style={{
-                          padding: '16px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          gap: '12px',
-                        }}
+                  {qaQuestions.map((q) => (
+                    <div
+                      key={q.id}
+                      className="card"
+                      style={{ padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                    >
+                      <span style={{ fontSize: '0.95rem' }}>{q.text}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleUpvoteQuestion(q.id)}
+                        disabled={upvotedQuestions[q.id]}
+                        className={`btn btn--sm ${upvotedQuestions[q.id] ? 'btn--primary' : 'btn--ghost'}`}
                       >
-                        <p style={{ margin: 0, color: 'var(--color-text-primary)', fontSize: '0.95rem' }}>
-                          {q.text}
-                        </p>
-                        <button
-                          onClick={() => handleUpvoteQuestion(q.id)}
-                          disabled={isUpvoted}
-                          className={`qa-upvote__btn ${isUpvoted ? 'qa-upvote__btn--voted' : ''}`}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            padding: '6px 12px',
-                            borderRadius: '8px',
-                            border: '1px solid var(--color-border)',
-                            background: isUpvoted ? 'rgba(124,92,252,0.2)' : 'transparent',
-                            color: isUpvoted ? 'var(--color-primary-light)' : 'var(--color-text-secondary)',
-                            cursor: isUpvoted ? 'default' : 'pointer',
-                          }}
-                        >
-                          <span>▲</span>
-                          <span style={{ fontWeight: 700 }}>{q.upvotes}</span>
-                        </button>
-                      </div>
-                    );
-                  })}
+                        ▲ {q.upvotes}
+                      </button>
+                    </div>
+                  ))}
                 </div>
-              </div>
-            )}
-
-            {/* Vote Confirmation Indicator */}
-            {hasVotedCurrent && (
-              <div
-                style={{
-                  marginTop: '20px',
-                  textAlign: 'center',
-                  fontSize: '0.85rem',
-                  color: 'var(--color-secondary)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '6px',
-                }}
-              >
-                <span>✓</span>
-                <span>Response recorded in real-time</span>
               </div>
             )}
           </div>
         ) : (
-          <div style={{ textAlign: 'center', padding: '60px 0' }}>
-            <div style={{ fontSize: '2.5rem', marginBottom: '16px' }}>⏳</div>
-            <h2>Waiting for presenter...</h2>
-            <p style={{ color: 'var(--color-text-secondary)', marginTop: '8px' }}>
-              The presentation will begin shortly when the presenter starts the first slide.
-            </p>
+          <div className="card" style={{ padding: '40px', textAlign: 'center', maxWidth: '400px', margin: '0 auto' }}>
+            <p style={{ color: 'var(--color-text-muted)' }}>Waiting for the presenter to share a slide...</p>
           </div>
         )}
       </div>

@@ -615,11 +615,22 @@ export default function PresentationEditorPage() {
                   </label>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                     {(activeSlide.options || []).map((opt, i) => (
-                      <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <div
+                        key={i}
+                        style={{
+                          display: 'flex',
+                          gap: '8px',
+                          alignItems: 'center',
+                          padding: '6px 10px',
+                          borderRadius: '10px',
+                          background: activeSlide.config?.correctAnswer === opt ? 'rgba(34, 197, 94, 0.08)' : 'transparent',
+                          border: activeSlide.config?.correctAnswer === opt ? '1px solid rgba(34, 197, 94, 0.4)' : '1px solid transparent',
+                        }}
+                      >
                         <span
                           style={{
                             width: '24px',
-                            color: 'var(--color-text-muted)',
+                            color: activeSlide.config?.correctAnswer === opt ? '#22c55e' : 'var(--color-text-muted)',
                             fontWeight: 700,
                             textAlign: 'center',
                           }}
@@ -631,8 +642,15 @@ export default function PresentationEditorPage() {
                           value={opt}
                           onChange={(e) => {
                             const newOpts = [...(activeSlide.options || [])];
+                            const oldVal = newOpts[i];
                             newOpts[i] = e.target.value;
-                            updateActiveSlide({ options: newOpts });
+                            const isCurrentlyCorrect = activeSlide.config?.correctAnswer === oldVal;
+                            updateActiveSlide({
+                              options: newOpts,
+                              config: isCurrentlyCorrect
+                                ? { ...activeSlide.config, correctAnswer: e.target.value }
+                                : activeSlide.config,
+                            });
                           }}
                           placeholder={`Option ${i + 1}`}
                           className="form-input"
@@ -640,8 +658,38 @@ export default function PresentationEditorPage() {
                         <button
                           type="button"
                           onClick={() => {
+                            const isCurrentlyCorrect = activeSlide.config?.correctAnswer === opt;
+                            updateActiveSlide({
+                              config: {
+                                ...activeSlide.config,
+                                correctAnswer: isCurrentlyCorrect ? null : opt,
+                              },
+                            });
+                          }}
+                          className={`btn btn--sm ${
+                            activeSlide.config?.correctAnswer === opt ? 'btn--primary' : 'btn--ghost'
+                          }`}
+                          style={{
+                            whiteSpace: 'nowrap',
+                            fontSize: '0.78rem',
+                            background: activeSlide.config?.correctAnswer === opt ? '#16a34a' : undefined,
+                            borderColor: activeSlide.config?.correctAnswer === opt ? '#22c55e' : undefined,
+                          }}
+                          title="Designate this option as the correct quiz answer"
+                        >
+                          {activeSlide.config?.correctAnswer === opt ? '✓ Correct Answer' : 'Mark Correct'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
                             const newOpts = (activeSlide.options || []).filter((_, idx) => idx !== i);
-                            updateActiveSlide({ options: newOpts });
+                            const isRemovingCorrect = activeSlide.config?.correctAnswer === opt;
+                            updateActiveSlide({
+                              options: newOpts,
+                              config: isRemovingCorrect
+                                ? { ...activeSlide.config, correctAnswer: null }
+                                : activeSlide.config,
+                            });
                           }}
                           className="btn btn--danger btn--sm"
                           disabled={(activeSlide.options || []).length <= 2}
@@ -653,7 +701,7 @@ export default function PresentationEditorPage() {
                     ))}
                   </div>
 
-                  <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                     <button
                       type="button"
                       onClick={() => {
@@ -665,6 +713,27 @@ export default function PresentationEditorPage() {
                       ＋ Add Option
                     </button>
 
+                    {/* Quiz Timer Duration Selector */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', fontWeight: 600 }}>⏱️ Quiz Timer:</span>
+                      <select
+                        className="form-select"
+                        style={{ padding: '4px 10px', fontSize: '0.85rem', width: 'auto' }}
+                        value={activeSlide.config?.durationSeconds || 20}
+                        onChange={(e) =>
+                          updateActiveSlide({
+                            config: { ...activeSlide.config, durationSeconds: Number(e.target.value) },
+                          })
+                        }
+                      >
+                        <option value="10">10 seconds</option>
+                        <option value="20">20 seconds (Default)</option>
+                        <option value="30">30 seconds</option>
+                        <option value="60">60 seconds</option>
+                        <option value="90">90 seconds</option>
+                      </select>
+                    </div>
+
                     <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.85rem' }}>
                       <input
                         type="checkbox"
@@ -675,7 +744,7 @@ export default function PresentationEditorPage() {
                           })
                         }
                       />
-                      Allow participants to select multiple options
+                      Allow multiple options
                     </label>
                   </div>
                 </div>

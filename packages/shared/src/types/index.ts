@@ -192,3 +192,93 @@ export interface AISummaryResult {
   themes: string[];
   synthesis: string;
 }
+
+// ─── Game Loop & Competition ───────────────────────────────────────────────
+
+export type GameState =
+  | 'LOBBY'
+  | 'COUNTDOWN'
+  | 'QUESTION_ACTIVE'
+  | 'QUESTION_LOCKED'
+  | 'REVEAL'
+  | 'LEADERBOARD'
+  | 'FINAL_RESULTS';
+
+export interface GameParticipant {
+  token: string;
+  nickname: string;
+  avatar: string;
+  score: number;
+  streak: number;
+  lastPoints: number;
+  lastCorrect: boolean;
+  totalTimeTaken: number;
+  rank: number;
+  previousRank: number;
+}
+
+export interface LeaderboardEntry {
+  token: string;
+  nickname: string;
+  avatar: string;
+  score: number;
+  streak: number;
+  rank: number;
+  rankChange: number | 'new';
+  lastPoints: number;
+}
+
+export interface QuestionTimerState {
+  slideId: string;
+  questionStartedAt: number;
+  durationSeconds: number;
+  answeredCount: number;
+  totalParticipants: number;
+}
+
+export interface JoinLobbyPayload {
+  sessionId?: string;
+  joinCode: string;
+  participantToken: string;
+  nickname: string;
+  avatar: string;
+}
+
+export interface AdvanceQuizPayload {
+  sessionId: string;
+  targetState?: GameState;
+  nextSlideId?: string;
+}
+
+export interface GameStateChangedEvent {
+  state: GameState;
+  slideId?: string;
+  countdown?: number;
+  timer?: QuestionTimerState;
+  correctAnswer?: string | string[];
+  revealTally?: Tally;
+}
+
+export interface LobbyUpdateEvent {
+  participants: Array<{ token: string; nickname: string; avatar: string }>;
+  count: number;
+}
+
+export interface LeaderboardUpdateEvent {
+  entries: LeaderboardEntry[];
+  totalParticipants: number;
+}
+
+export interface FinalResultsEvent {
+  podium: LeaderboardEntry[];
+  fullLeaderboard: LeaderboardEntry[];
+}
+
+export interface ParticipantScoreEvent {
+  pointsEarned: number;
+  isCorrect: boolean;
+  streak: number;
+  totalScore: number;
+  rank: number;
+}
+

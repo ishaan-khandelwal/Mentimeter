@@ -12,6 +12,7 @@ import { flushOnSessionEnd } from '../persistence/flushWorker';
 import { clearSession } from '../tally/tallyManager';
 import { clearPresence, broadcastPresence, setPresenterOnline } from '../rooms/presence';
 import { getPeakPresence, getPresenceCount } from '../rooms/presence';
+import { gameManager } from '../game/gameManager';
 import type {
   ChangeSlidePayload,
   LockVotingPayload,
@@ -180,6 +181,7 @@ export async function handleEndSession(
   }).catch(console.error);
 
   // Clean up
+  gameManager.endSession(sessionId);
   clearSession(sessionId);
   await clearPresence(sessionId);
   await setPresenterOnline(io, sessionId, false);

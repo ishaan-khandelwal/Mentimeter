@@ -15,6 +15,7 @@ import { submitVote } from '../tally/tallyManager';
 import { markDirty } from '../tally/broadcaster';
 import { prisma } from '@pollwave/shared';
 import type { SubmitVotePayload } from '@pollwave/shared';
+import { gameManager } from '../game/gameManager';
 
 // Per-token, per-slide: max 1 vote. Redis key TTL prevents abuse long-term.
 const VOTE_RATE_LIMIT_TTL = 86400; // 24 hours
@@ -73,6 +74,34 @@ export async function handleVote(
   // Mark for next broadcast tick (200ms throttled)
   markDirty(sessionId, slideId);
 
+  // Record in Competition Game Manager (speed scoring & streak bonus)
+  const scoreResult = gameManager.recordAnswer(sessionId, slideId, participantToken, value);
+  if (scoreResult) {
+    socket.emit('participant_score', {
+      pointsEarned: scoreResult.pointsEarned,
+      isCorrect: scoreResult.isCorrect,
+      streak: scoreResult.streak,
+      totalScore: scoreResult.totalScore,
+      rank: scoreResult.rank,
+    });
+
+    // Broadcast live participant answered count to presenter & session
+    io.to(`session:${sessionId}`).emit('timer_update', {
+      slideId,
+      answeredCount: scoreResult.answeredCount,
+      totalParticipants: scoreResult.totalParticipants,
+    });
+
+    // If all participants have voted, trigger early lock!
+    if (scoreResult.shouldLockEarly) {
+      io.to(`session:${sessionId}`).emit('voting_locked', { locked: true });
+      io.to(`session:${sessionId}`).emit('game_state_changed', {
+        state: 'QUESTION_LOCKED',
+        slideId,
+      });
+    }
+  }
+
   // Persist individual Response to PostgreSQL (async, non-blocking)
   prisma.response.create({
     data: {
@@ -91,3 +120,4 @@ export async function handleVote(
   // Acknowledge to voter
   socket.emit('vote_accepted', { slideId });
 }
+

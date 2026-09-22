@@ -34,6 +34,7 @@ import {
 } from '../tally/tallyManager';
 import { registerSession } from '../persistence/flushWorker';
 import { config } from '../../config';
+import { gameManager } from '../game/gameManager';
 import type {
   JoinSessionPayload,
   SubmitVotePayload,
@@ -45,6 +46,8 @@ import type {
   StartSessionPayload,
   SessionStartedEvent,
   QAQuestion,
+  JoinLobbyPayload,
+  AdvanceQuizPayload,
 } from '@pollwave/shared';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -120,16 +123,22 @@ export function registerSocketHandlers(io: IOServer): void {
         // Update presence
         await incrementPresence(io, sessionId);
 
+        const currentGameState = gameManager.getSession(sessionId);
+        const lobbyData = gameManager.getLobbyList(sessionId);
+
         // Send current session state to new attendee
         socket.emit('session_joined', {
           sessionId,
           currentSlideId: session.currentSlideId ?? null,
           votingLocked: session.votingLocked,
+          gameState: currentGameState?.state || 'LOBBY',
+          lobby: lobbyData,
           slides: slides.map((s: any) => ({
             _id: s.id,
             type: s.type,
             question: s.question,
             options: Array.isArray(s.options) ? (s.options as string[]) : [],
+            config: s.config,
             order: s.order,
           })),
           tally: session.currentSlideId
@@ -182,10 +191,15 @@ export function registerSocketHandlers(io: IOServer): void {
 
       await setPresenterOnline(io, sessionId, true);
 
+      const currentGameState = gameManager.getSession(sessionId);
+      const lobbyData = gameManager.getLobbyList(sessionId);
+
       socket.emit('presenter_joined', {
         sessionId,
         currentSlideId: session.currentSlideId ?? null,
         votingLocked: session.votingLocked,
+        gameState: currentGameState?.state || 'LOBBY',
+        lobby: lobbyData,
       });
     });
 
@@ -318,6 +332,191 @@ export function registerSocketHandlers(io: IOServer): void {
     socket.on('lock_voting', async (payload: LockVotingPayload) => {
       if (!socketSessions.get(socket.id)?.isPresenter) return;
       await handleLockVoting(io, socket, payload);
+    });
+
+    // ── Attendee: Join Waiting Lobby ──────────────────────────────────────
+    socket.on('join_lobby', async (payload: JoinLobbyPayload) => {
+      try {
+        const { joinCode, participantToken, nickname, avatar } = payload;
+        const presentation = await prisma.presentation.findFirst({
+          where: { joinCode: joinCode.toUpperCase(), status: 'live' },
+        });
+        if (!presentation) {
+          socket.emit('error', { code: 'SESSION_NOT_FOUND', message: 'No active session found for this code' });
+          return;
+        }
+
+        const session = await prisma.session.findFirst({
+          where: { presentationId: presentation.id, status: 'active' },
+        });
+        if (!session) {
+          socket.emit('error', { code: 'SESSION_NOT_ACTIVE', message: 'Session is not active' });
+          return;
+        }
+
+        const sessionId = session.id;
+        await socket.join(`session:${sessionId}`);
+
+        socketSessions.set(socket.id, {
+          sessionId,
+          presentationId: presentation.id,
+          participantToken,
+          isPresenter: false,
+        });
+
+        const lobbyData = gameManager.joinLobby(sessionId, presentation.id, {
+          token: participantToken,
+          nickname,
+          avatar,
+        });
+
+        // Broadcast to presenter & everyone in room
+        io.to(`session:${sessionId}`).emit('lobby_update', lobbyData);
+
+        const currentGameState = gameManager.getSession(sessionId);
+        socket.emit('lobby_joined', {
+          sessionId,
+          state: currentGameState?.state || 'LOBBY',
+          participants: lobbyData.participants,
+          count: lobbyData.count,
+        });
+      } catch (err) {
+        console.error('[Socket] join_lobby error:', err);
+        socket.emit('error', { code: 'INTERNAL', message: 'Failed to join lobby' });
+      }
+    });
+
+    // ── Presenter: Advance Quiz (Kahoot Game Loop) ─────────────────────────
+    socket.on('advance_quiz', async (payload: AdvanceQuizPayload) => {
+      const data = socketSessions.get(socket.id);
+      if (!data?.isPresenter) {
+        socket.emit('error', { code: 'UNAUTHORIZED', message: 'Presenter only' });
+        return;
+      }
+
+      const { sessionId, targetState, nextSlideId } = payload;
+      const session = await prisma.session.findUnique({
+        where: { id: sessionId },
+        include: {
+          presentation: {
+            include: {
+              slides: { orderBy: { order: 'asc' } },
+            },
+          },
+        },
+      });
+
+      if (!session) return;
+      const slides = session.presentation.slides;
+      if (slides.length === 0) return;
+
+      let targetSlide = slides[0];
+      if (nextSlideId) {
+        const found = slides.find((s) => s.id === nextSlideId);
+        if (found) targetSlide = found;
+      } else if (session.currentSlideId) {
+        const currentIndex = slides.findIndex((s) => s.id === session.currentSlideId);
+        if (currentIndex >= 0) {
+          targetSlide = slides[currentIndex];
+        }
+      }
+
+      if (targetState === 'COUNTDOWN') {
+        const slideConfig = (targetSlide.config as any) || {};
+        const durationSeconds = Number(slideConfig.durationSeconds) || 20;
+        const correctAnswer = slideConfig.correctAnswer ?? null;
+
+        gameManager.startCountdown(
+          sessionId,
+          targetSlide.id,
+          durationSeconds,
+          correctAnswer,
+          (countdown) => {
+            io.to(`session:${sessionId}`).emit('game_state_changed', {
+              state: 'COUNTDOWN',
+              countdown,
+              slideId: targetSlide.id,
+            });
+          },
+          () => {
+            // Automatically transitions to QUESTION_ACTIVE
+            prisma.session.update({
+              where: { id: sessionId },
+              data: { currentSlideId: targetSlide.id, votingLocked: false },
+            }).catch(console.error);
+
+            io.to(`session:${sessionId}`).emit('slide_changed', {
+              currentSlideId: targetSlide.id,
+              votingLocked: false,
+            });
+
+            const timerState = gameManager.startQuestion(
+              sessionId,
+              targetSlide.id,
+              durationSeconds,
+              correctAnswer,
+              () => {
+                // On question timer expire -> lock question
+                prisma.session.update({
+                  where: { id: sessionId },
+                  data: { votingLocked: true },
+                }).catch(console.error);
+
+                io.to(`session:${sessionId}`).emit('voting_locked', { locked: true });
+                io.to(`session:${sessionId}`).emit('game_state_changed', {
+                  state: 'QUESTION_LOCKED',
+                  slideId: targetSlide.id,
+                });
+              }
+            );
+
+            io.to(`session:${sessionId}`).emit('game_state_changed', {
+              state: 'QUESTION_ACTIVE',
+              slideId: targetSlide.id,
+              timer: timerState,
+            });
+          }
+        );
+      } else if (targetState === 'QUESTION_LOCKED') {
+        gameManager.lockQuestion(sessionId);
+        await prisma.session.update({
+          where: { id: sessionId },
+          data: { votingLocked: true },
+        });
+        io.to(`session:${sessionId}`).emit('voting_locked', { locked: true });
+        io.to(`session:${sessionId}`).emit('game_state_changed', {
+          state: 'QUESTION_LOCKED',
+          slideId: targetSlide.id,
+        });
+      } else if (targetState === 'REVEAL') {
+        gameManager.setState(sessionId, 'REVEAL');
+        const slideConfig = (targetSlide.config as any) || {};
+        const revealTally = getLocalTally(sessionId, targetSlide.id);
+
+        io.to(`session:${sessionId}`).emit('game_state_changed', {
+          state: 'REVEAL',
+          slideId: targetSlide.id,
+          correctAnswer: slideConfig.correctAnswer,
+          revealTally,
+        });
+      } else if (targetState === 'LEADERBOARD') {
+        gameManager.setState(sessionId, 'LEADERBOARD');
+        const leaderboard = gameManager.getLeaderboard(sessionId);
+
+        io.to(`session:${sessionId}`).emit('leaderboard_update', leaderboard);
+        io.to(`session:${sessionId}`).emit('game_state_changed', {
+          state: 'LEADERBOARD',
+          slideId: targetSlide.id,
+        });
+      } else if (targetState === 'FINAL_RESULTS') {
+        gameManager.setState(sessionId, 'FINAL_RESULTS');
+        const results = gameManager.getFinalResults(sessionId);
+
+        io.to(`session:${sessionId}`).emit('final_results', results);
+        io.to(`session:${sessionId}`).emit('game_state_changed', {
+          state: 'FINAL_RESULTS',
+        });
+      }
     });
 
     socket.on('end_session', async (payload: EndSessionPayload) => {
