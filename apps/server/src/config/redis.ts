@@ -1,35 +1,45 @@
-import Redis from 'ioredis';
+import Redis, { RedisOptions } from 'ioredis';
 import { config } from '../config';
 
-// Primary client used by the Redis adapter and general operations
-export const redis = new Redis(config.redisUrl, {
+const isTls = config.redisUrl.startsWith('rediss://');
+
+const redisOptions: RedisOptions = {
   maxRetriesPerRequest: 3,
   enableReadyCheck: true,
   lazyConnect: true,
-});
+  connectTimeout: 10000,
+  ...(isTls
+    ? {
+        tls: {
+          rejectUnauthorized: false,
+        },
+      }
+    : {}),
+  retryStrategy(times) {
+    if (times > 5) return null;
+    return Math.min(times * 300, 2000);
+  },
+};
+
+// Primary client used by the Redis adapter and general operations
+export const redis = new Redis(config.redisUrl, redisOptions);
 
 // Dedicated subscriber client required by ioredis Pub/Sub
 // (a subscribed client cannot run regular commands)
-export const redisSub = new Redis(config.redisUrl, {
-  maxRetriesPerRequest: 3,
-  enableReadyCheck: true,
-  lazyConnect: true,
-});
+export const redisSub = new Redis(config.redisUrl, redisOptions);
 
 // Second pub client for the @socket.io/redis-adapter
-export const redisPub = new Redis(config.redisUrl, {
-  maxRetriesPerRequest: 3,
-  enableReadyCheck: true,
-  lazyConnect: true,
-});
+export const redisPub = new Redis(config.redisUrl, redisOptions);
 
 redis.on('error', (err) => console.error('[Redis] Error:', err.message));
 redisSub.on('error', (err) => console.error('[Redis Sub] Error:', err.message));
 redisPub.on('error', (err) => console.error('[Redis Pub] Error:', err.message));
 
 export async function connectRedis(): Promise<void> {
+  const masked = config.redisUrl.replace(/:([^:@]+)@/, ':****@');
+  console.log(`[Redis] Connecting to ${masked}...`);
   await Promise.all([redis.connect(), redisSub.connect(), redisPub.connect()]);
-  console.log('[Redis] Connected');
+  console.log('[Redis] Connected successfully');
 }
 
 // ─── Key helpers ─────────────────────────────────────────────────────────────
