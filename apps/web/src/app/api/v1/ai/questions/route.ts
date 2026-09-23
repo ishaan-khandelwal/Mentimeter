@@ -32,6 +32,7 @@ export async function POST(req: Request) {
         type: 'multiple_choice',
         question: `How would you prioritize our current focus on "${topic}"?`,
         options: ['High priority — immediate focus', 'Medium priority — steady progress', 'Low priority — backlog for now', 'Need more information first'],
+        correctAnswer: 'High priority — immediate focus',
       },
       {
         type: 'word_cloud',
@@ -59,7 +60,8 @@ Respond ONLY with a valid JSON array of objects with the structure:
   {
     "type": "multiple_choice" | "word_cloud" | "open_text" | "rating_scale" | "ranking" | "qa",
     "question": "Engaging question text",
-    "options": ["Option 1", "Option 2"] // only for multiple_choice and ranking
+    "options": ["Option 1", "Option 2"], // only for multiple_choice and ranking
+    "correctAnswer": "Option 1" // only for multiple_choice: designate the correct quiz answer from the options array
   }
 ]`;
 

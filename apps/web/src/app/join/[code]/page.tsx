@@ -663,7 +663,7 @@ export default function AttendeeVotingPage() {
             </div>
           )}
 
-          {revealData?.correctAnswer && (
+          {(revealData?.correctAnswer || activeSlide?.config?.correctAnswer) && (
             <div
               style={{
                 background: 'rgba(255, 255, 255, 0.04)',
@@ -675,9 +675,10 @@ export default function AttendeeVotingPage() {
             >
               <span style={{ color: 'var(--color-text-muted)' }}>Correct Answer: </span>
               <strong style={{ color: '#4ade80' }}>
-                {Array.isArray(revealData.correctAnswer)
-                  ? revealData.correctAnswer.join(', ')
-                  : revealData.correctAnswer}
+                {(() => {
+                  const ans = revealData?.correctAnswer ?? activeSlide?.config?.correctAnswer;
+                  return Array.isArray(ans) ? ans.join(', ') : ans;
+                })()}
               </strong>
             </div>
           )}

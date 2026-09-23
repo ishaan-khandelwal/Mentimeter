@@ -254,23 +254,23 @@ export class GameManager {
     const timeTaken = Math.max(0.1, (now - session.questionStartedAt) / 1000);
 
     // Normalize submitted answer to string representation for comparison
-    const normalizedSubmitted = Array.isArray(submittedAnswer)
-      ? submittedAnswer.map(String)
-      : String(submittedAnswer);
+    const cleanStr = (s: any) => String(s ?? '').trim().toLowerCase();
 
     // Evaluate correctness
     let isCorrect = false;
     if (session.correctAnswer !== null && session.correctAnswer !== undefined) {
       if (Array.isArray(session.correctAnswer)) {
-        if (Array.isArray(normalizedSubmitted)) {
+        const correctClean = session.correctAnswer.map(cleanStr);
+        if (Array.isArray(submittedAnswer)) {
+          const submittedClean = submittedAnswer.map(cleanStr);
           isCorrect =
-            session.correctAnswer.length === normalizedSubmitted.length &&
-            session.correctAnswer.every((ans) => normalizedSubmitted.includes(String(ans)));
+            correctClean.length === submittedClean.length &&
+            correctClean.every((ans) => submittedClean.includes(ans));
         } else {
-          isCorrect = session.correctAnswer.map(String).includes(normalizedSubmitted);
+          isCorrect = correctClean.includes(cleanStr(submittedAnswer));
         }
       } else {
-        isCorrect = String(session.correctAnswer) === normalizedSubmitted;
+        isCorrect = cleanStr(session.correctAnswer) === cleanStr(submittedAnswer);
       }
     } else {
       // If no correct answer configured, award participation points (flat 1000 scaled by speed)

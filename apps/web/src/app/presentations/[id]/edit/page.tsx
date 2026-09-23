@@ -42,6 +42,129 @@ export default function PresentationEditorPage() {
   const [aiGenerating, setAiGenerating] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
+  // Create Question Modal states
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createType, setCreateType] = useState<SlideType>('multiple_choice');
+  const [createQuestion, setCreateQuestion] = useState('');
+  const [createOptions, setCreateOptions] = useState<string[]>([
+    'Option 1',
+    'Option 2',
+    'Option 3',
+    'Option 4',
+  ]);
+  const [createCorrectAnswer, setCreateCorrectAnswer] = useState<string | string[] | null>('Option 1');
+  const [createAllowMultiple, setCreateAllowMultiple] = useState(false);
+  const [createDurationSeconds, setCreateDurationSeconds] = useState(20);
+  const [createCreating, setCreateCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  const openCreateQuestionModal = (type: SlideType = 'multiple_choice') => {
+    setCreateType(type);
+    setCreateQuestion(
+      type === 'multiple_choice'
+        ? 'What is the correct answer to this question?'
+        : type === 'word_cloud'
+        ? 'Describe your thoughts in one word'
+        : type === 'open_text'
+        ? 'What is your response or answer?'
+        : type === 'rating_scale'
+        ? 'How would you rate this?'
+        : type === 'ranking'
+        ? 'Rank these items in priority order'
+        : 'Ask your question for our Q&A session'
+    );
+    setCreateOptions(
+      type === 'multiple_choice'
+        ? ['Option A', 'Option B', 'Option C', 'Option D']
+        : type === 'ranking'
+        ? ['First Item', 'Second Item', 'Third Item']
+        : []
+    );
+    setCreateCorrectAnswer(type === 'multiple_choice' ? 'Option A' : null);
+    setCreateAllowMultiple(false);
+    setCreateDurationSeconds(20);
+    setCreateError(null);
+    setShowCreateModal(true);
+  };
+
+  const handleConfirmCreateQuestion = async () => {
+    if (!createQuestion.trim()) {
+      setCreateError('Please enter a question or prompt.');
+      return;
+    }
+
+    const trimmedOptions = (createType === 'multiple_choice' || createType === 'ranking')
+      ? createOptions.map((o) => o.trim()).filter(Boolean)
+      : [];
+
+    if (createType === 'multiple_choice' && trimmedOptions.length < 2) {
+      setCreateError('Please provide at least 2 non-empty options.');
+      return;
+    }
+
+    setCreateCreating(true);
+    setCreateError(null);
+
+    try {
+      const config: Record<string, any> = {
+        durationSeconds: createDurationSeconds,
+      };
+
+      if (createType === 'multiple_choice') {
+        config.allowMultiple = createAllowMultiple;
+        if (createCorrectAnswer) {
+          if (Array.isArray(createCorrectAnswer)) {
+            const valid = createCorrectAnswer.filter((ans) => trimmedOptions.includes(ans));
+            config.correctAnswer = valid.length > 0 ? valid : null;
+          } else if (trimmedOptions.includes(createCorrectAnswer)) {
+            config.correctAnswer = createCorrectAnswer;
+          } else if (trimmedOptions.length > 0) {
+            config.correctAnswer = trimmedOptions[0];
+          }
+        }
+      } else if (createType === 'open_text') {
+        if (typeof createCorrectAnswer === 'string' && createCorrectAnswer.trim()) {
+          config.correctAnswer = createCorrectAnswer.trim();
+        }
+      } else if (createType === 'word_cloud') {
+        config.maxEntries = 3;
+      } else if (createType === 'rating_scale') {
+        config.min = 1;
+        config.max = 5;
+        config.lowLabel = 'Needs Work';
+        config.highLabel = 'Outstanding';
+      } else if (createType === 'qa') {
+        config.allowAnonymous = true;
+        config.moderated = false;
+      }
+
+      const res = await fetch(`/api/v1/presentations/${id}/slides`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: createType,
+          question: createQuestion.trim(),
+          options: trimmedOptions,
+          config,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setSlides((prev) => [...prev, data.slide]);
+        setActiveSlideIndex(slides.length);
+        setShowCreateModal(false);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setCreateError(errData.error || 'Failed to create question.');
+      }
+    } catch (err: any) {
+      setCreateError(err?.message || 'Error creating question.');
+    } finally {
+      setCreateCreating(false);
+    }
+  };
+
   const createInitialSlide = useCallback(async () => {
     try {
       const res = await fetch(`/api/v1/presentations/${id}/slides`, {
@@ -306,7 +429,7 @@ export default function PresentationEditorPage() {
             type: item.type || 'multiple_choice',
             question: item.question,
             options: item.options || [],
-            config: {},
+            config: item.config || (item.correctAnswer ? { correctAnswer: item.correctAnswer, durationSeconds: 20 } : {}),
           }),
         });
         if (slideRes.ok) {
@@ -445,11 +568,12 @@ export default function PresentationEditorPage() {
               Slides ({slides.length})
             </span>
             <button
-              onClick={() => handleAddSlide('multiple_choice')}
-              className="btn btn--secondary btn--sm"
-              title="Add slide"
+              onClick={() => openCreateQuestionModal('multiple_choice')}
+              className="btn btn--primary btn--sm"
+              title="Create new question with correct answer options"
+              style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.8rem', padding: '6px 10px' }}
             >
-              ＋ Add
+              ＋ Add Question
             </button>
           </div>
 
@@ -493,11 +617,28 @@ export default function PresentationEditorPage() {
                       whiteSpace: 'nowrap',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
-                      maxWidth: '120px',
+                      maxWidth: s.config?.correctAnswer ? '80px' : '120px',
                     }}
                   >
                     {s.question || 'Untitled'}
                   </span>
+                  {s.config?.correctAnswer && (
+                    <span
+                      style={{
+                        fontSize: '0.62rem',
+                        fontWeight: 700,
+                        background: 'rgba(34, 197, 94, 0.15)',
+                        color: '#4ade80',
+                        border: '1px solid rgba(34, 197, 94, 0.3)',
+                        padding: '1px 5px',
+                        borderRadius: '4px',
+                        whiteSpace: 'nowrap',
+                      }}
+                      title={`Correct answer: ${Array.isArray(s.config.correctAnswer) ? s.config.correctAnswer.join(', ') : s.config.correctAnswer}`}
+                    >
+                      ✓ Quiz
+                    </span>
+                  )}
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
@@ -607,148 +748,292 @@ export default function PresentationEditorPage() {
                 />
               </div>
 
-              {/* Multiple Choice Options */}
-              {activeSlide.type === 'multiple_choice' && (
-                <div className="card" style={{ padding: '24px', marginBottom: '24px' }}>
-                  <label className="form-label" style={{ marginBottom: '12px', display: 'block' }}>
-                    Options
-                  </label>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {(activeSlide.options || []).map((opt, i) => (
-                      <div
-                        key={i}
-                        style={{
-                          display: 'flex',
-                          gap: '8px',
-                          alignItems: 'center',
-                          padding: '6px 10px',
-                          borderRadius: '10px',
-                          background: activeSlide.config?.correctAnswer === opt ? 'rgba(34, 197, 94, 0.08)' : 'transparent',
-                          border: activeSlide.config?.correctAnswer === opt ? '1px solid rgba(34, 197, 94, 0.4)' : '1px solid transparent',
-                        }}
-                      >
-                        <span
-                          style={{
-                            width: '24px',
-                            color: activeSlide.config?.correctAnswer === opt ? '#22c55e' : 'var(--color-text-muted)',
-                            fontWeight: 700,
-                            textAlign: 'center',
-                          }}
-                        >
-                          {String.fromCharCode(65 + i)}
-                        </span>
-                        <input
-                          type="text"
-                          value={opt}
-                          onChange={(e) => {
-                            const newOpts = [...(activeSlide.options || [])];
-                            const oldVal = newOpts[i];
-                            newOpts[i] = e.target.value;
-                            const isCurrentlyCorrect = activeSlide.config?.correctAnswer === oldVal;
-                            updateActiveSlide({
-                              options: newOpts,
-                              config: isCurrentlyCorrect
-                                ? { ...activeSlide.config, correctAnswer: e.target.value }
-                                : activeSlide.config,
-                            });
-                          }}
-                          placeholder={`Option ${i + 1}`}
-                          className="form-input"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const isCurrentlyCorrect = activeSlide.config?.correctAnswer === opt;
-                            updateActiveSlide({
-                              config: {
-                                ...activeSlide.config,
-                                correctAnswer: isCurrentlyCorrect ? null : opt,
-                              },
-                            });
-                          }}
-                          className={`btn btn--sm ${
-                            activeSlide.config?.correctAnswer === opt ? 'btn--primary' : 'btn--ghost'
-                          }`}
-                          style={{
-                            whiteSpace: 'nowrap',
-                            fontSize: '0.78rem',
-                            background: activeSlide.config?.correctAnswer === opt ? '#16a34a' : undefined,
-                            borderColor: activeSlide.config?.correctAnswer === opt ? '#22c55e' : undefined,
-                          }}
-                          title="Designate this option as the correct quiz answer"
-                        >
-                          {activeSlide.config?.correctAnswer === opt ? '✓ Correct Answer' : 'Mark Correct'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const newOpts = (activeSlide.options || []).filter((_, idx) => idx !== i);
-                            const isRemovingCorrect = activeSlide.config?.correctAnswer === opt;
-                            updateActiveSlide({
-                              options: newOpts,
-                              config: isRemovingCorrect
-                                ? { ...activeSlide.config, correctAnswer: null }
-                                : activeSlide.config,
-                            });
-                          }}
-                          className="btn btn--danger btn--sm"
-                          disabled={(activeSlide.options || []).length <= 2}
-                          title="Remove option"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+              {/* Multiple Choice Options & Correct Answer */}
+              {activeSlide.type === 'multiple_choice' && (() => {
+                const isOptionCorrect = (opt: string) => {
+                  if (!activeSlide.config?.correctAnswer) return false;
+                  if (Array.isArray(activeSlide.config.correctAnswer)) {
+                    return activeSlide.config.correctAnswer.includes(opt);
+                  }
+                  return activeSlide.config.correctAnswer === opt;
+                };
 
-                  <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const newOpts = [...(activeSlide.options || []), `Option ${(activeSlide.options || []).length + 1}`];
-                        updateActiveSlide({ options: newOpts });
+                const toggleOptionCorrect = (opt: string) => {
+                  const isMulti = activeSlide.config?.allowMultiple;
+                  if (isMulti) {
+                    const currentList: string[] = Array.isArray(activeSlide.config?.correctAnswer)
+                      ? [...activeSlide.config.correctAnswer]
+                      : activeSlide.config?.correctAnswer
+                      ? [activeSlide.config.correctAnswer]
+                      : [];
+                    const idx = currentList.indexOf(opt);
+                    if (idx >= 0) {
+                      currentList.splice(idx, 1);
+                    } else {
+                      currentList.push(opt);
+                    }
+                    updateActiveSlide({
+                      config: {
+                        ...activeSlide.config,
+                        correctAnswer: currentList.length > 0 ? currentList : null,
+                      },
+                    });
+                  } else {
+                    const isAlready = activeSlide.config?.correctAnswer === opt;
+                    updateActiveSlide({
+                      config: {
+                        ...activeSlide.config,
+                        correctAnswer: isAlready ? null : opt,
+                      },
+                    });
+                  }
+                };
+
+                return (
+                  <div className="card" style={{ padding: '24px', marginBottom: '24px' }}>
+                    {/* Correct Answer Header & Quick Selector */}
+                    <div
+                      style={{
+                        padding: '16px',
+                        borderRadius: '12px',
+                        background: activeSlide.config?.correctAnswer
+                          ? 'rgba(34, 197, 94, 0.08)'
+                          : 'rgba(255, 255, 255, 0.03)',
+                        border: activeSlide.config?.correctAnswer
+                          ? '1px solid rgba(34, 197, 94, 0.35)'
+                          : '1px solid var(--color-border)',
+                        marginBottom: '20px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '12px',
                       }}
-                      className="btn btn--secondary btn--sm"
                     >
-                      ＋ Add Option
-                    </button>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontSize: '1.2rem' }}>🎯</span>
+                          <div>
+                            <span style={{ fontWeight: 700, fontSize: '0.98rem' }}>Quiz Correct Answer</span>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
+                              {activeSlide.config?.correctAnswer ? (
+                                <span style={{ color: '#4ade80', fontWeight: 600 }}>
+                                  ✓ Correct answer saved:{' '}
+                                  {Array.isArray(activeSlide.config.correctAnswer)
+                                    ? activeSlide.config.correctAnswer.join(', ')
+                                    : activeSlide.config.correctAnswer}
+                                </span>
+                              ) : (
+                                <span>No correct answer selected (Survey mode — all answers give participation points).</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
 
-                    {/* Quiz Timer Duration Selector */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', fontWeight: 600 }}>⏱️ Quiz Timer:</span>
-                      <select
-                        className="form-select"
-                        style={{ padding: '4px 10px', fontSize: '0.85rem', width: 'auto' }}
-                        value={activeSlide.config?.durationSeconds || 20}
-                        onChange={(e) =>
-                          updateActiveSlide({
-                            config: { ...activeSlide.config, durationSeconds: Number(e.target.value) },
-                          })
-                        }
-                      >
-                        <option value="10">10 seconds</option>
-                        <option value="20">20 seconds (Default)</option>
-                        <option value="30">30 seconds</option>
-                        <option value="60">60 seconds</option>
-                        <option value="90">90 seconds</option>
-                      </select>
+                        {/* Quick Dropdown for Single Choice */}
+                        {!activeSlide.config?.allowMultiple && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '0.82rem', color: 'var(--color-text-secondary)', fontWeight: 600 }}>
+                              Choose Answer:
+                            </span>
+                            <select
+                              className="form-select"
+                              style={{ padding: '6px 12px', fontSize: '0.82rem', width: 'auto', borderRadius: '8px' }}
+                              value={typeof activeSlide.config?.correctAnswer === 'string' ? activeSlide.config.correctAnswer : ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                updateActiveSlide({
+                                  config: {
+                                    ...activeSlide.config,
+                                    correctAnswer: val ? val : null,
+                                  },
+                                });
+                              }}
+                            >
+                              <option value="">-- None (Survey Mode) --</option>
+                              {(activeSlide.options || []).map((opt, i) => (
+                                <option key={i} value={opt}>
+                                  Option {String.fromCharCode(65 + i)}: {opt || `(Option ${i + 1})`}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.85rem' }}>
-                      <input
-                        type="checkbox"
-                        checked={activeSlide.config?.allowMultiple || false}
-                        onChange={(e) =>
-                          updateActiveSlide({
-                            config: { ...activeSlide.config, allowMultiple: e.target.checked },
-                          })
-                        }
-                      />
-                      Allow multiple options
+                    <label className="form-label" style={{ marginBottom: '12px', display: 'block' }}>
+                      Options & Correct Answer Designation
                     </label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {(activeSlide.options || []).map((opt, i) => {
+                        const isCorrect = isOptionCorrect(opt);
+                        return (
+                          <div
+                            key={i}
+                            style={{
+                              display: 'flex',
+                              gap: '10px',
+                              alignItems: 'center',
+                              padding: '8px 12px',
+                              borderRadius: '10px',
+                              background: isCorrect ? 'rgba(34, 197, 94, 0.1)' : 'rgba(255, 255, 255, 0.02)',
+                              border: isCorrect ? '1.5px solid #22c55e' : '1px solid var(--color-border)',
+                              transition: 'all 0.2s ease',
+                            }}
+                          >
+                            <span
+                              style={{
+                                width: '28px',
+                                height: '28px',
+                                borderRadius: '50%',
+                                background: isCorrect ? '#22c55e' : 'rgba(255, 255, 255, 0.06)',
+                                color: isCorrect ? '#000000' : 'var(--color-text-secondary)',
+                                fontWeight: 800,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '0.85rem',
+                                flexShrink: 0,
+                              }}
+                            >
+                              {String.fromCharCode(65 + i)}
+                            </span>
+                            <input
+                              type="text"
+                              value={opt}
+                              onChange={(e) => {
+                                const newOpts = [...(activeSlide.options || [])];
+                                const oldVal = newOpts[i];
+                                const newVal = e.target.value;
+                                newOpts[i] = newVal;
+
+                                let updatedConfig = activeSlide.config || {};
+                                if (Array.isArray(updatedConfig.correctAnswer)) {
+                                  updatedConfig = {
+                                    ...updatedConfig,
+                                    correctAnswer: updatedConfig.correctAnswer.map((ans: string) =>
+                                      ans === oldVal ? newVal : ans
+                                    ),
+                                  };
+                                } else if (updatedConfig.correctAnswer === oldVal) {
+                                  updatedConfig = {
+                                    ...updatedConfig,
+                                    correctAnswer: newVal,
+                                  };
+                                }
+
+                                updateActiveSlide({
+                                  options: newOpts,
+                                  config: updatedConfig,
+                                });
+                              }}
+                              placeholder={`Option ${i + 1}`}
+                              className="form-input"
+                              style={{ flex: 1 }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => toggleOptionCorrect(opt)}
+                              className={`btn btn--sm ${isCorrect ? 'btn--primary' : 'btn--ghost'}`}
+                              style={{
+                                whiteSpace: 'nowrap',
+                                fontSize: '0.8rem',
+                                fontWeight: isCorrect ? 700 : 500,
+                                background: isCorrect ? '#16a34a' : 'rgba(255, 255, 255, 0.05)',
+                                borderColor: isCorrect ? '#22c55e' : 'var(--color-border)',
+                                color: isCorrect ? '#ffffff' : 'var(--color-text-secondary)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                padding: '6px 12px',
+                                minWidth: '125px',
+                                justifyContent: 'center',
+                              }}
+                              title="Click to toggle whether this option is the correct answer"
+                            >
+                              {isCorrect ? '✓ Correct Answer' : '○ Mark Correct'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newOpts = (activeSlide.options || []).filter((_, idx) => idx !== i);
+                                let updatedConfig = activeSlide.config || {};
+                                if (Array.isArray(updatedConfig.correctAnswer)) {
+                                  const filtered = updatedConfig.correctAnswer.filter((ans: string) => ans !== opt);
+                                  updatedConfig = {
+                                    ...updatedConfig,
+                                    correctAnswer: filtered.length > 0 ? filtered : null,
+                                  };
+                                } else if (updatedConfig.correctAnswer === opt) {
+                                  updatedConfig = {
+                                    ...updatedConfig,
+                                    correctAnswer: null,
+                                  };
+                                }
+                                updateActiveSlide({
+                                  options: newOpts,
+                                  config: updatedConfig,
+                                });
+                              }}
+                              className="btn btn--danger btn--sm"
+                              disabled={(activeSlide.options || []).length <= 2}
+                              title="Remove option"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newOpts = [...(activeSlide.options || []), `Option ${(activeSlide.options || []).length + 1}`];
+                          updateActiveSlide({ options: newOpts });
+                        }}
+                        className="btn btn--secondary btn--sm"
+                      >
+                        ＋ Add Option
+                      </button>
+
+                      {/* Quiz Timer Duration Selector */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', fontWeight: 600 }}>⏱️ Quiz Timer:</span>
+                        <select
+                          className="form-select"
+                          style={{ padding: '4px 10px', fontSize: '0.85rem', width: 'auto' }}
+                          value={activeSlide.config?.durationSeconds || 20}
+                          onChange={(e) =>
+                            updateActiveSlide({
+                              config: { ...activeSlide.config, durationSeconds: Number(e.target.value) },
+                            })
+                          }
+                        >
+                          <option value="10">10 seconds</option>
+                          <option value="20">20 seconds (Default)</option>
+                          <option value="30">30 seconds</option>
+                          <option value="60">60 seconds</option>
+                          <option value="90">90 seconds</option>
+                        </select>
+                      </div>
+
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.85rem' }}>
+                        <input
+                          type="checkbox"
+                          checked={activeSlide.config?.allowMultiple || false}
+                          onChange={(e) =>
+                            updateActiveSlide({
+                              config: { ...activeSlide.config, allowMultiple: e.target.checked },
+                            })
+                          }
+                        />
+                        Allow multiple options
+                      </label>
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* Word Cloud Settings */}
               {activeSlide.type === 'word_cloud' && (
@@ -919,15 +1204,43 @@ export default function PresentationEditorPage() {
                 </div>
               )}
 
-              {/* Open Text Information */}
+              {/* Open Text Settings & Correct Answer */}
               {activeSlide.type === 'open_text' && (
                 <div className="card" style={{ padding: '24px', marginBottom: '24px' }}>
                   <label className="form-label" style={{ marginBottom: '8px', display: 'block' }}>
-                    Open Text Feedback
+                    Open Text Feedback &amp; Quiz Answer
                   </label>
-                  <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.85rem' }}>
+                  <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.85rem', marginBottom: '16px' }}>
                     Participants will see a free-form text input and can submit responses in real time.
                   </p>
+
+                  <div className="form-group">
+                    <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span>🎯 Accepted Correct Answer (Optional for Quiz)</span>
+                      {activeSlide.config?.correctAnswer && (
+                        <span className="badge badge--success" style={{ fontSize: '0.72rem', padding: '2px 8px' }}>
+                          Quiz Scoring Active
+                        </span>
+                      )}
+                    </label>
+                    <input
+                      type="text"
+                      value={typeof activeSlide.config?.correctAnswer === 'string' ? activeSlide.config.correctAnswer : ''}
+                      onChange={(e) =>
+                        updateActiveSlide({
+                          config: {
+                            ...activeSlide.config,
+                            correctAnswer: e.target.value.trim() ? e.target.value.trim() : null,
+                          },
+                        })
+                      }
+                      placeholder="e.g. Paris (Leave empty for open-ended survey without grading)"
+                      className="form-input"
+                    />
+                    <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '4px', display: 'block' }}>
+                      If set, participant submissions that match this answer (case-insensitive) will receive speed quiz points.
+                    </span>
+                  </div>
                 </div>
               )}
             </div>
@@ -1017,6 +1330,340 @@ export default function PresentationEditorPage() {
                 className="btn btn--primary"
               >
                 {aiGenerating ? 'Generating Slides...' : '✨ Generate & Add Slides'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Question Modal with Correct Answer Selection */}
+      {showCreateModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.8)',
+            backdropFilter: 'blur(8px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '16px',
+          }}
+          onClick={() => setShowCreateModal(false)}
+        >
+          <div
+            className="card"
+            style={{
+              width: '100%',
+              maxWidth: '650px',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              padding: '32px',
+              borderRadius: '16px',
+              border: '1px solid rgba(255, 255, 255, 0.15)',
+              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.6)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '1.6rem' }}>❓</span>
+                <div>
+                  <h2 style={{ fontSize: '1.35rem', margin: 0 }}>Create Question</h2>
+                  <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                    Add a quiz question or poll and specify the correct answer for leaderboard scoring.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(false)}
+                className="btn btn--ghost btn--sm"
+                style={{ fontSize: '1.1rem', padding: '4px 8px' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {createError && (
+              <div className="auth-alert auth-alert--error" style={{ marginBottom: '16px' }}>
+                <span>⚠️</span>
+                <span>{createError}</span>
+              </div>
+            )}
+
+            {/* Slide Type Selection */}
+            <div className="form-group" style={{ marginBottom: '20px' }}>
+              <label className="form-label" style={{ marginBottom: '8px', display: 'block' }}>Question Type</label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                {(
+                  [
+                    ['multiple_choice', '📊 Multiple Choice'],
+                    ['word_cloud', '☁️ Word Cloud'],
+                    ['open_text', '💬 Open Text'],
+                    ['rating_scale', '⭐ Rating Scale'],
+                    ['ranking', '🏆 Ranking'],
+                    ['qa', '❓ Live Q&A'],
+                  ] as [SlideType, string][]
+                ).map(([t, label]) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => {
+                      setCreateType(t);
+                      if (t === 'multiple_choice' && createOptions.length === 0) {
+                        setCreateOptions(['Option A', 'Option B', 'Option C', 'Option D']);
+                        setCreateCorrectAnswer('Option A');
+                      }
+                    }}
+                    className={`btn btn--sm ${createType === t ? 'btn--primary' : 'btn--ghost'}`}
+                    style={{ justifyContent: 'center', padding: '10px 8px', fontSize: '0.85rem' }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Question Text */}
+            <div className="form-group" style={{ marginBottom: '20px' }}>
+              <label className="form-label">Question / Prompt</label>
+              <input
+                type="text"
+                value={createQuestion}
+                onChange={(e) => setCreateQuestion(e.target.value)}
+                placeholder="e.g. Which planet is known as the Red Planet?"
+                className="form-input"
+                style={{ fontSize: '1rem', fontWeight: 600, padding: '12px 16px' }}
+                autoFocus
+              />
+            </div>
+
+            {/* Multiple Choice Options & Mark Correct Answer */}
+            {createType === 'multiple_choice' && (
+              <div style={{ marginBottom: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                  <label className="form-label" style={{ margin: 0 }}>
+                    Options &amp; Correct Answer
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer', color: 'var(--color-text-secondary)' }}>
+                    <input
+                      type="checkbox"
+                      checked={createAllowMultiple}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setCreateAllowMultiple(checked);
+                        if (checked) {
+                          setCreateCorrectAnswer(
+                            createCorrectAnswer
+                              ? (Array.isArray(createCorrectAnswer) ? createCorrectAnswer : [createCorrectAnswer])
+                              : []
+                          );
+                        } else {
+                          setCreateCorrectAnswer(
+                            Array.isArray(createCorrectAnswer) ? createCorrectAnswer[0] || null : createCorrectAnswer
+                          );
+                        }
+                      }}
+                    />
+                    Multiple correct answers
+                  </label>
+                </div>
+
+                <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '10px' }}>
+                  Click <strong>Mark Correct</strong> on the option that represents the right answer for the quiz.
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {createOptions.map((opt, idx) => {
+                    const isCorrect = Array.isArray(createCorrectAnswer)
+                      ? createCorrectAnswer.includes(opt)
+                      : createCorrectAnswer === opt;
+
+                    return (
+                      <div
+                        key={idx}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          padding: '6px 10px',
+                          borderRadius: '8px',
+                          background: isCorrect ? 'rgba(34, 197, 94, 0.12)' : 'rgba(255, 255, 255, 0.03)',
+                          border: isCorrect ? '1.5px solid #22c55e' : '1px solid var(--color-border)',
+                          transition: 'all 0.15s ease',
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: '26px',
+                            height: '26px',
+                            borderRadius: '50%',
+                            background: isCorrect ? '#22c55e' : 'rgba(255, 255, 255, 0.08)',
+                            color: isCorrect ? '#000' : 'var(--color-text-muted)',
+                            fontWeight: 700,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '0.8rem',
+                            flexShrink: 0,
+                          }}
+                        >
+                          {String.fromCharCode(65 + idx)}
+                        </span>
+
+                        <input
+                          type="text"
+                          value={opt}
+                          onChange={(e) => {
+                            const newOpts = [...createOptions];
+                            const oldVal = newOpts[idx];
+                            const newVal = e.target.value;
+                            newOpts[idx] = newVal;
+
+                            if (Array.isArray(createCorrectAnswer)) {
+                              setCreateCorrectAnswer(createCorrectAnswer.map((ans) => (ans === oldVal ? newVal : ans)));
+                            } else if (createCorrectAnswer === oldVal) {
+                              setCreateCorrectAnswer(newVal);
+                            }
+                            setCreateOptions(newOpts);
+                          }}
+                          placeholder={`Option ${idx + 1}`}
+                          className="form-input"
+                          style={{ flex: 1, padding: '8px 12px', fontSize: '0.9rem' }}
+                        />
+
+                        {/* Mark Correct button */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (createAllowMultiple) {
+                              const currentList = Array.isArray(createCorrectAnswer)
+                                ? [...createCorrectAnswer]
+                                : createCorrectAnswer
+                                ? [createCorrectAnswer]
+                                : [];
+                              const pos = currentList.indexOf(opt);
+                              if (pos >= 0) currentList.splice(pos, 1);
+                              else currentList.push(opt);
+                              setCreateCorrectAnswer(currentList.length > 0 ? currentList : null);
+                            } else {
+                              setCreateCorrectAnswer(createCorrectAnswer === opt ? null : opt);
+                            }
+                          }}
+                          className={`btn btn--sm ${isCorrect ? 'btn--primary' : 'btn--ghost'}`}
+                          style={{
+                            whiteSpace: 'nowrap',
+                            fontSize: '0.78rem',
+                            background: isCorrect ? '#16a34a' : 'transparent',
+                            borderColor: isCorrect ? '#22c55e' : undefined,
+                            color: isCorrect ? '#fff' : 'var(--color-text-secondary)',
+                            fontWeight: isCorrect ? 700 : 500,
+                            padding: '6px 12px',
+                            minWidth: '120px',
+                            justifyContent: 'center',
+                          }}
+                          title="Click to toggle whether this option is the correct answer"
+                        >
+                          {isCorrect ? '✓ Correct Answer' : '○ Mark Correct'}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newOpts = createOptions.filter((_, i) => i !== idx);
+                            if (Array.isArray(createCorrectAnswer)) {
+                              setCreateCorrectAnswer(createCorrectAnswer.filter((ans) => ans !== opt));
+                            } else if (createCorrectAnswer === opt) {
+                              setCreateCorrectAnswer(null);
+                            }
+                            setCreateOptions(newOpts);
+                          }}
+                          className="btn btn--danger btn--sm"
+                          disabled={createOptions.length <= 2}
+                          title="Remove option"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newOpts = [...createOptions, `Option ${createOptions.length + 1}`];
+                      setCreateOptions(newOpts);
+                    }}
+                    className="btn btn--secondary btn--sm"
+                  >
+                    ＋ Add Option
+                  </button>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', fontWeight: 600 }}>⏱️ Quiz Timer:</span>
+                    <select
+                      className="form-select"
+                      style={{ padding: '4px 10px', fontSize: '0.85rem', width: 'auto' }}
+                      value={createDurationSeconds}
+                      onChange={(e) => setCreateDurationSeconds(Number(e.target.value))}
+                    >
+                      <option value="10">10 seconds</option>
+                      <option value="20">20 seconds (Default)</option>
+                      <option value="30">30 seconds</option>
+                      <option value="60">60 seconds</option>
+                      <option value="90">90 seconds</option>
+                    </select>
+                  </div>
+                </div>
+
+                {createCorrectAnswer && (
+                  <div style={{ marginTop: '12px', padding: '10px 14px', borderRadius: '8px', background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.3)', fontSize: '0.85rem', color: '#4ade80' }}>
+                    🎯 <strong>Designated Correct Answer:</strong>{' '}
+                    {Array.isArray(createCorrectAnswer) ? createCorrectAnswer.join(', ') : createCorrectAnswer}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Open Text Correct Answer */}
+            {createType === 'open_text' && (
+              <div className="form-group" style={{ marginBottom: '20px' }}>
+                <label className="form-label">🎯 Correct Answer (Optional for scored quiz)</label>
+                <input
+                  type="text"
+                  value={typeof createCorrectAnswer === 'string' ? createCorrectAnswer : ''}
+                  onChange={(e) => setCreateCorrectAnswer(e.target.value)}
+                  placeholder="e.g. Paris (Leave empty for open survey without grading)"
+                  className="form-input"
+                />
+                <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '4px', display: 'block' }}>
+                  If set, audience responses matching this text (case-insensitive) will receive speed quiz points.
+                </span>
+              </div>
+            )}
+
+            {/* Modal Actions */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(false)}
+                className="btn btn--ghost"
+                disabled={createCreating}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCreateQuestion}
+                disabled={createCreating || !createQuestion.trim()}
+                className="btn btn--primary"
+                style={{ minWidth: '140px' }}
+              >
+                {createCreating ? 'Creating Question...' : '✓ Create Question'}
               </button>
             </div>
           </div>

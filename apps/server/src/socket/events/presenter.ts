@@ -54,6 +54,11 @@ export async function handleNextSlide(
     },
   });
 
+  const nextSlideConfig = (nextSlide.config as any) || {};
+  const gameSessionNext = gameManager.getOrCreateSession(sessionId, session.presentationId);
+  gameSessionNext.currentSlideId = nextSlide.id;
+  gameSessionNext.correctAnswer = nextSlideConfig.correctAnswer ?? null;
+
   const event: SlideChangedEvent = {
     currentSlideId: nextSlide.id,
     votingLocked: false,
@@ -90,6 +95,11 @@ export async function handlePrevSlide(
     },
   });
 
+  const prevSlideConfig = (prevSlide.config as any) || {};
+  const gameSessionPrev = gameManager.getOrCreateSession(sessionId, session.presentationId);
+  gameSessionPrev.currentSlideId = prevSlide.id;
+  gameSessionPrev.correctAnswer = prevSlideConfig.correctAnswer ?? null;
+
   const event: SlideChangedEvent = {
     currentSlideId: prevSlide.id,
     votingLocked: false,
@@ -118,6 +128,12 @@ export async function handleGoToSlide(
       votingLocked: false,
     },
   });
+
+  const targetSlide = await prisma.slide.findUnique({ where: { id: slideId } });
+  const targetConfig = (targetSlide?.config as any) || {};
+  const gameSessionGoTo = gameManager.getOrCreateSession(sessionId, session.presentationId);
+  gameSessionGoTo.currentSlideId = slideId;
+  gameSessionGoTo.correctAnswer = targetConfig.correctAnswer ?? null;
 
   const event: SlideChangedEvent = { currentSlideId: slideId, votingLocked: false };
   io.to(`session:${sessionId}`).emit('slide_changed', event);

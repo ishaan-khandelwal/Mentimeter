@@ -910,6 +910,7 @@ export default function PresenterLivePage() {
                     const isCorrectAnswer =
                       gameState === 'REVEAL' &&
                       (activeSlide.config?.correctAnswer === opt ||
+                        (Array.isArray(activeSlide.config?.correctAnswer) && activeSlide.config.correctAnswer.includes(opt)) ||
                         revealData?.correctAnswer === opt ||
                         (Array.isArray(revealData?.correctAnswer) && revealData.correctAnswer.includes(opt)));
 
