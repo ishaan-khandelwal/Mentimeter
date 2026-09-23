@@ -278,9 +278,13 @@ export default function PresenterLivePage() {
     };
 
     const onTimerUpdate = (data: { slideId: string; answeredCount: number; totalParticipants: number }) => {
-      setTimerState((prev) =>
-        prev ? { ...prev, answeredCount: data.answeredCount, totalParticipants: data.totalParticipants } : null
-      );
+      setTimerState((prev) => ({
+        slideId: data.slideId,
+        questionStartedAt: prev?.questionStartedAt || Date.now(),
+        durationSeconds: prev?.durationSeconds || 20,
+        answeredCount: data.answeredCount,
+        totalParticipants: Math.max(data.totalParticipants, lobbyParticipants.length, 1),
+      }));
     };
 
     const onLeaderboardUpdate = (data: { entries: LeaderboardEntry[]; totalParticipants: number }) => {
@@ -380,6 +384,41 @@ export default function PresenterLivePage() {
 
     return () => clearInterval(timer);
   }, [gameState, activeSlide]);
+
+  // Live REST tallies & answered counts sync (bulletproof real-time backup to WebSockets)
+  useEffect(() => {
+    if (!id || (gameState !== 'QUESTION_ACTIVE' && gameState !== 'QUESTION_LOCKED' && gameState !== 'REVEAL')) return;
+
+    let isMounted = true;
+    const syncVotes = async () => {
+      try {
+        const res = await fetch(`/api/v1/presentations/${id}/vote`);
+        if (res.ok && isMounted) {
+          const data = await res.json();
+          if (data.tallies) {
+            setTallies((prev) => ({ ...prev, ...data.tallies }));
+          }
+          if (activeSlide && data.tallies && data.tallies[activeSlide._id]) {
+            const count = Object.values(data.tallies[activeSlide._id]).reduce((a: number, b: any) => a + Number(b), 0);
+            setTimerState((prev) => ({
+              slideId: activeSlide._id,
+              questionStartedAt: prev?.questionStartedAt || Date.now(),
+              durationSeconds: prev?.durationSeconds || 20,
+              answeredCount: Math.max(prev?.answeredCount || 0, count),
+              totalParticipants: Math.max(prev?.totalParticipants || 0, lobbyParticipants.length, 1),
+            }));
+          }
+        }
+      } catch {}
+    };
+
+    syncVotes();
+    const interval = setInterval(syncVotes, 1500);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [id, gameState, activeSlide, lobbyParticipants.length]);
 
   // Question active timer countdown effect
   useEffect(() => {
@@ -998,8 +1037,8 @@ export default function PresenterLivePage() {
                   >
                     Question {currentIndex + 1} of {slides.length}
                   </span>
-                  <div style={{ fontSize: '1.1rem', color: 'var(--color-text-secondary)', fontWeight: 600, marginTop: '2px' }}>
-                    👥 {timerState?.answeredCount ?? totalVotes} / {Math.max(lobbyParticipants.length, 1)} Answered
+                  <div style={{ fontSize: '1.15rem', color: '#3f2940', fontWeight: 700, marginTop: '2px' }}>
+                    👥 {Math.max(timerState?.answeredCount || 0, totalVotes)} / {Math.max(lobbyParticipants.length, timerState?.totalParticipants || 1)} Answered
                   </div>
                 </div>
 

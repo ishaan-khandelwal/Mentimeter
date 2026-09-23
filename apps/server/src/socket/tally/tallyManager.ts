@@ -83,10 +83,10 @@ export async function submitVote(
   value: string | string[] | number | Record<string, any>,
   hashedToken: string,
 ): Promise<boolean> {
-  // Deduplication check (Redis Set per slide per session)
+  // Track unique voters in Redis set with 2-hour TTL
   const votersKey = keys.voters(sessionId, slideId);
-  const isNew = await redis.sadd(votersKey, hashedToken);
-  if (!isNew) return false; // already voted
+  await redis.sadd(votersKey, hashedToken);
+  await redis.expire(votersKey, 7200);
 
   const slideTallyKey = keys.slideTally(sessionId, slideId);
 

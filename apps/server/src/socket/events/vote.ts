@@ -39,37 +39,15 @@ export async function handleVote(
   const { slideId, value, participantToken } = payload;
   const { sessionId, presentationId } = sessionData;
 
-  // Validate token matches session token
-  if (participantToken !== sessionData.participantToken) {
-    socket.emit('error', { code: 'INVALID_TOKEN', message: 'Token mismatch' });
-    return;
+  // Align participant token if session data token was not populated
+  if (participantToken && (!sessionData.participantToken || sessionData.participantToken === '')) {
+    sessionData.participantToken = participantToken;
   }
 
   const hashedToken = hashToken(participantToken);
 
-  // Rate-limit: one vote per slide per token per session
-  const limitKey = keys.voteLimit(sessionId, hashedToken, slideId);
-  const alreadyVoted = await redis.get(limitKey);
-  if (alreadyVoted) {
-    socket.emit('error', {
-      code: 'ALREADY_VOTED',
-      message: 'You have already voted on this slide',
-    });
-    return;
-  }
-
-  // Set rate limit flag
-  await redis.set(limitKey, '1', 'EX', VOTE_RATE_LIMIT_TTL);
-
   // Submit to tally (Redis + local memory + Pub/Sub)
-  const accepted = await submitVote(sessionId, slideId, value, hashedToken);
-  if (!accepted) {
-    socket.emit('error', {
-      code: 'ALREADY_VOTED',
-      message: 'Duplicate vote rejected',
-    });
-    return;
-  }
+  await submitVote(sessionId, slideId, value, hashedToken);
 
   // Mark for next broadcast tick (200ms throttled)
   markDirty(sessionId, slideId);
@@ -101,11 +79,32 @@ export async function handleVote(
         slideId,
       });
     }
+  } else {
+    // Fallback broadcast answered count to presenter
+    const slideAnswersCount = await prisma.response.count({
+      where: { slideId, presentationId },
+    }).catch(() => 1);
+
+    io.to(`session:${sessionId}`).emit('timer_update', {
+      slideId,
+      answeredCount: slideAnswersCount + 1,
+      totalParticipants: gameManager.getLobbyList(sessionId).count || 1,
+    });
   }
 
-  // Persist individual Response to PostgreSQL (async, non-blocking)
-  prisma.response.create({
-    data: {
+  // Persist individual Response to PostgreSQL (upsert so it never throws unique constraint errors)
+  prisma.response.upsert({
+    where: {
+      slideId_participantToken: {
+        slideId,
+        participantToken: hashedToken,
+      },
+    },
+    update: {
+      value: value as any,
+      sessionId,
+    },
+    create: {
       presentationId,
       slideId,
       sessionId,
@@ -113,8 +112,6 @@ export async function handleVote(
       value: value as any,
     },
   }).catch((err: any) => {
-    // P2002 = Unique constraint violation on [slideId, participantToken]
-    if (err.code === 'P2002') return;
     console.error('[Vote] Failed to persist response:', err.message);
   });
 

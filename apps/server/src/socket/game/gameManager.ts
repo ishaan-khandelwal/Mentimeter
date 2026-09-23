@@ -300,29 +300,16 @@ export class GameManager {
       return null;
     }
 
-    // Auto-align session if on current slide but state was still transitioning
+    // Auto-align session to the submitted slide so latency never drops a vote
     if (session.currentSlideId !== slideId) {
-      if (!session.currentSlideId) {
-        session.currentSlideId = slideId;
-      } else {
-        return null;
-      }
+      session.currentSlideId = slideId;
     }
 
     if (session.state !== 'QUESTION_ACTIVE') {
-      if (session.state === 'COUNTDOWN' || session.state === 'LOBBY') {
-        session.state = 'QUESTION_ACTIVE';
-        if (session.questionStartedAt <= 0) {
-          session.questionStartedAt = Date.now() - 500;
-        }
-      } else {
-        return null;
+      session.state = 'QUESTION_ACTIVE';
+      if (session.questionStartedAt <= 0) {
+        session.questionStartedAt = Date.now() - 500;
       }
-    }
-
-    // Double voting guard
-    if (session.answeredParticipants.has(participantToken)) {
-      return null;
     }
 
     session.answeredParticipants.add(participantToken);

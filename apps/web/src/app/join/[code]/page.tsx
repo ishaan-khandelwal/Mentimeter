@@ -483,10 +483,21 @@ export default function AttendeeVotingPage() {
         participantToken,
       });
 
+      // Dual-sync: also persist via REST immediately so the vote is NEVER lost!
+      fetch(`/api/v1/presentations/${code}/vote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slideId: currentSlideId,
+          value,
+          participantToken,
+        }),
+      }).catch(() => {});
+
       setMySubmittedAnswer(String(value));
       setVotedSlides((prev) => ({ ...prev, [currentSlideId]: true }));
     },
-    [currentSlideId, votingLocked, votedSlides, participantToken]
+    [currentSlideId, votingLocked, votedSlides, participantToken, code]
   );
 
   // Submit Word Cloud word
