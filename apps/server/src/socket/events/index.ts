@@ -442,12 +442,19 @@ export function registerSocketHandlers(io: IOServer): void {
         }
       }
 
-      if (targetState === 'COUNTDOWN') {
-        const slideConfig = (targetSlide.config as any) || {};
-        const durationSeconds = Number(slideConfig.durationSeconds) || 20;
-        const correctAnswer = slideConfig.correctAnswer ?? null;
-        const presentationId = session.presentationId;
+      const parseConfig = (cfg: any): Record<string, any> => {
+        if (typeof cfg === 'string') {
+          try { return JSON.parse(cfg); } catch { return {}; }
+        }
+        return cfg && typeof cfg === 'object' ? cfg : {};
+      };
+      const slideConfig = parseConfig(targetSlide.config);
+      const slideOptions = Array.isArray(targetSlide.options) ? (targetSlide.options as string[]) : [];
+      const durationSeconds = Number(slideConfig.durationSeconds) || 20;
+      const correctAnswer = slideConfig.correctAnswer ?? null;
+      const presentationId = session.presentationId;
 
+      if (targetState === 'COUNTDOWN') {
         gameManager.startCountdown(
           sessionId,
           presentationId,
@@ -491,7 +498,8 @@ export function registerSocketHandlers(io: IOServer): void {
                   state: 'QUESTION_LOCKED',
                   slideId: targetSlide.id,
                 });
-              }
+              },
+              slideOptions
             );
 
             io.to(`session:${sessionId}`).emit('game_state_changed', {
@@ -499,8 +507,46 @@ export function registerSocketHandlers(io: IOServer): void {
               slideId: targetSlide.id,
               timer: timerState,
             });
-          }
+          },
+          slideOptions
         );
+      } else if (targetState === 'QUESTION_ACTIVE') {
+        await prisma.session.update({
+          where: { id: sessionId },
+          data: { currentSlideId: targetSlide.id, votingLocked: false },
+        }).catch(console.error);
+
+        io.to(`session:${sessionId}`).emit('slide_changed', {
+          currentSlideId: targetSlide.id,
+          votingLocked: false,
+        });
+
+        const timerState = gameManager.startQuestion(
+          sessionId,
+          presentationId,
+          targetSlide.id,
+          durationSeconds,
+          correctAnswer,
+          () => {
+            prisma.session.update({
+              where: { id: sessionId },
+              data: { votingLocked: true },
+            }).catch(console.error);
+
+            io.to(`session:${sessionId}`).emit('voting_locked', { locked: true });
+            io.to(`session:${sessionId}`).emit('game_state_changed', {
+              state: 'QUESTION_LOCKED',
+              slideId: targetSlide.id,
+            });
+          },
+          slideOptions
+        );
+
+        io.to(`session:${sessionId}`).emit('game_state_changed', {
+          state: 'QUESTION_ACTIVE',
+          slideId: targetSlide.id,
+          timer: timerState,
+        });
       } else if (targetState === 'QUESTION_LOCKED') {
         gameManager.lockQuestion(sessionId);
         await prisma.session.update({
@@ -514,7 +560,6 @@ export function registerSocketHandlers(io: IOServer): void {
         });
       } else if (targetState === 'REVEAL') {
         gameManager.setState(sessionId, 'REVEAL');
-        const slideConfig = (targetSlide.config as any) || {};
         const revealTally = getLocalTally(sessionId, targetSlide.id);
 
         io.to(`session:${sessionId}`).emit('game_state_changed', {

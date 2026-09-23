@@ -183,6 +183,13 @@ export default function AttendeeVotingPage() {
       setCurrentSlideId(data.currentSlideId);
       setVotingLocked(data.votingLocked);
       setMySubmittedAnswer(null);
+      if (data.currentSlideId) {
+        setVotedSlides((prev) => {
+          const next = { ...prev };
+          delete next[data.currentSlideId];
+          return next;
+        });
+      }
     };
 
     const onVotingLocked = (data: { locked: boolean }) => {
@@ -201,7 +208,14 @@ export default function AttendeeVotingPage() {
     const onGameStateChanged = (data: GameStateChangedEvent) => {
       setGameState(data.state);
       if (data.countdown !== undefined) setCountdownNumber(data.countdown);
-      if (data.slideId) setCurrentSlideId(data.slideId);
+      if (data.slideId) {
+        setCurrentSlideId(data.slideId);
+        setVotedSlides((prev) => {
+          const next = { ...prev };
+          delete next[data.slideId!];
+          return next;
+        });
+      }
       if (data.timer) {
         setTimerState(data.timer);
         setRemainingTime(data.timer.durationSeconds);
@@ -651,6 +665,27 @@ export default function AttendeeVotingPage() {
               >
                 +{participantScore?.pointsEarned || 0} pts
               </div>
+
+              {participantScore?.timeTaken !== undefined && participantScore.timeTaken > 0 && (
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    color: '#38bdf8',
+                    fontWeight: 700,
+                    fontSize: '0.9rem',
+                    background: 'rgba(56, 189, 248, 0.12)',
+                    border: '1px solid rgba(56, 189, 248, 0.25)',
+                    padding: '4px 14px',
+                    borderRadius: '100px',
+                    margin: '6px 0 10px',
+                  }}
+                >
+                  ⚡ Answered in {participantScore.timeTaken}s
+                </div>
+              )}
+
               {participantScore && participantScore.streak > 1 && (
                 <div style={{ color: '#f97316', fontWeight: 800, fontSize: '1rem', marginTop: '6px' }}>
                   🔥 {participantScore.streak} Answer Streak! (+{(Math.min(participantScore.streak * 10, 50))}% Bonus)
@@ -738,6 +773,12 @@ export default function AttendeeVotingPage() {
             <div style={{ color: 'var(--color-text-muted)', fontSize: '0.95rem' }}>
               {participantScore?.totalScore?.toLocaleString() || 0} total points
             </div>
+            {(participantScore?.pointsEarned || 0) > 0 && (
+              <div style={{ color: '#4ade80', fontWeight: 700, fontSize: '0.9rem', marginTop: '6px' }}>
+                +{participantScore?.pointsEarned} pts this round
+                {participantScore?.timeTaken ? ` (⚡ ${participantScore.timeTaken}s)` : ''}
+              </div>
+            )}
           </div>
 
           <p style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>

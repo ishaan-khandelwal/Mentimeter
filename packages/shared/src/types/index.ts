@@ -212,6 +212,7 @@ export interface GameParticipant {
   streak: number;
   lastPoints: number;
   lastCorrect: boolean;
+  lastTimeTaken?: number;
   totalTimeTaken: number;
   rank: number;
   previousRank: number;
@@ -226,6 +227,7 @@ export interface LeaderboardEntry {
   rank: number;
   rankChange: number | 'new';
   lastPoints: number;
+  lastTimeTaken?: number;
 }
 
 export interface QuestionTimerState {
@@ -280,5 +282,6 @@ export interface ParticipantScoreEvent {
   streak: number;
   totalScore: number;
   rank: number;
+  timeTaken?: number;
 }
 

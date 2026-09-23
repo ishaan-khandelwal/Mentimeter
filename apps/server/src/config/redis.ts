@@ -48,11 +48,11 @@ export const keys = {
   /** Session tally hash: HSET pollwave:tally:{sessionId} {slideId} {optionKey} count */
   tally: (sessionId: string) => `pollwave:tally:${sessionId}`,
 
-  /** Per-slide tally hash: HSET pollwave:slide_tally:{slideId} option count */
-  slideTally: (slideId: string) => `pollwave:slide_tally:${slideId}`,
+  /** Per-slide tally hash: HSET pollwave:slide_tally:{sessionId}:{slideId} option count */
+  slideTally: (sessionId: string, slideId: string) => `pollwave:slide_tally:${sessionId}:${slideId}`,
 
-  /** Set of hashed participant tokens that have voted on a slide */
-  voters: (slideId: string) => `pollwave:voters:${slideId}`,
+  /** Set of hashed participant tokens that have voted on a slide in a session */
+  voters: (sessionId: string, slideId: string) => `pollwave:voters:${sessionId}:${slideId}`,
 
   /** Pub/Sub channel for tally updates */
   tallyChannel: (sessionId: string) => `pollwave:tally_update:${sessionId}`,
@@ -69,6 +69,6 @@ export const keys = {
   /** QA questions hash for a slide */
   qaQuestions: (slideId: string) => `pollwave:qa:${slideId}`,
 
-  /** Per-token vote rate limit */
-  voteLimit: (token: string, slideId: string) => `pollwave:vote_limit:${token}:${slideId}`,
+  /** Per-token vote rate limit for a session */
+  voteLimit: (sessionId: string, token: string, slideId: string) => `pollwave:vote_limit:${sessionId}:${token}:${slideId}`,
 };

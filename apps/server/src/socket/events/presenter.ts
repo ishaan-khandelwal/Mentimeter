@@ -54,10 +54,22 @@ export async function handleNextSlide(
     },
   });
 
-  const nextSlideConfig = (nextSlide.config as any) || {};
+  const parseConfig = (cfg: any): Record<string, any> => {
+    if (typeof cfg === 'string') {
+      try { return JSON.parse(cfg); } catch { return {}; }
+    }
+    return cfg && typeof cfg === 'object' ? cfg : {};
+  };
+
+  const nextSlideConfig = parseConfig(nextSlide.config);
   const gameSessionNext = gameManager.getOrCreateSession(sessionId, session.presentationId);
+  gameSessionNext.state = 'QUESTION_ACTIVE';
   gameSessionNext.currentSlideId = nextSlide.id;
+  gameSessionNext.durationSeconds = Number(nextSlideConfig.durationSeconds) || 20;
   gameSessionNext.correctAnswer = nextSlideConfig.correctAnswer ?? null;
+  gameSessionNext.options = Array.isArray(nextSlide.options) ? (nextSlide.options as string[]) : [];
+  gameSessionNext.answeredParticipants.clear();
+  gameSessionNext.questionStartedAt = Date.now();
 
   const event: SlideChangedEvent = {
     currentSlideId: nextSlide.id,
@@ -95,10 +107,22 @@ export async function handlePrevSlide(
     },
   });
 
-  const prevSlideConfig = (prevSlide.config as any) || {};
+  const parseConfig = (cfg: any): Record<string, any> => {
+    if (typeof cfg === 'string') {
+      try { return JSON.parse(cfg); } catch { return {}; }
+    }
+    return cfg && typeof cfg === 'object' ? cfg : {};
+  };
+
+  const prevSlideConfig = parseConfig(prevSlide.config);
   const gameSessionPrev = gameManager.getOrCreateSession(sessionId, session.presentationId);
+  gameSessionPrev.state = 'QUESTION_ACTIVE';
   gameSessionPrev.currentSlideId = prevSlide.id;
+  gameSessionPrev.durationSeconds = Number(prevSlideConfig.durationSeconds) || 20;
   gameSessionPrev.correctAnswer = prevSlideConfig.correctAnswer ?? null;
+  gameSessionPrev.options = Array.isArray(prevSlide.options) ? (prevSlide.options as string[]) : [];
+  gameSessionPrev.answeredParticipants.clear();
+  gameSessionPrev.questionStartedAt = Date.now();
 
   const event: SlideChangedEvent = {
     currentSlideId: prevSlide.id,
@@ -130,10 +154,22 @@ export async function handleGoToSlide(
   });
 
   const targetSlide = await prisma.slide.findUnique({ where: { id: slideId } });
-  const targetConfig = (targetSlide?.config as any) || {};
+  const parseConfig = (cfg: any): Record<string, any> => {
+    if (typeof cfg === 'string') {
+      try { return JSON.parse(cfg); } catch { return {}; }
+    }
+    return cfg && typeof cfg === 'object' ? cfg : {};
+  };
+
+  const targetConfig = parseConfig(targetSlide?.config);
   const gameSessionGoTo = gameManager.getOrCreateSession(sessionId, session.presentationId);
+  gameSessionGoTo.state = 'QUESTION_ACTIVE';
   gameSessionGoTo.currentSlideId = slideId;
+  gameSessionGoTo.durationSeconds = Number(targetConfig.durationSeconds) || 20;
   gameSessionGoTo.correctAnswer = targetConfig.correctAnswer ?? null;
+  gameSessionGoTo.options = Array.isArray(targetSlide?.options) ? (targetSlide!.options as string[]) : [];
+  gameSessionGoTo.answeredParticipants.clear();
+  gameSessionGoTo.questionStartedAt = Date.now();
 
   const event: SlideChangedEvent = { currentSlideId: slideId, votingLocked: false };
   io.to(`session:${sessionId}`).emit('slide_changed', event);

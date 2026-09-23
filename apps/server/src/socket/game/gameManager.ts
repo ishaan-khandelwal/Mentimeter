@@ -31,9 +31,64 @@ export interface SessionGameState {
   questionStartedAt: number;
   durationSeconds: number;
   correctAnswer: string | string[] | null;
+  options?: string[];
   countdownTimer?: NodeJS.Timeout;
   questionTimer?: NodeJS.Timeout;
   revealTally?: Tally;
+}
+
+/**
+ * Normalizes and matches a submitted answer against the correct answer.
+ * Supports exact text, case-insensitive trimmed matching, option indices, and option labels ("Option A", "A").
+ */
+function matchesAnswerOption(
+  submitted: any,
+  correct: any,
+  options?: string[]
+): boolean {
+  if (submitted === null || submitted === undefined) return false;
+  if (correct === null || correct === undefined) return false;
+
+  const clean = (s: any) => String(s ?? '').trim().toLowerCase();
+  const subStr = clean(submitted);
+  const corStr = clean(correct);
+
+  if (!subStr || !corStr) return false;
+  if (subStr === corStr) return true;
+
+  if (options && Array.isArray(options) && options.length > 0) {
+    const optsClean = options.map(clean);
+
+    // Option index matching (e.g. correct is "0" or 0, or submitted is "0" or 0)
+    const corIndex = parseInt(corStr, 10);
+    if (!isNaN(corIndex) && corIndex >= 0 && corIndex < optsClean.length) {
+      if (subStr === optsClean[corIndex]) return true;
+    }
+    const subIndex = parseInt(subStr, 10);
+    if (!isNaN(subIndex) && subIndex >= 0 && subIndex < optsClean.length) {
+      if (corStr === optsClean[subIndex]) return true;
+    }
+
+    // Letter matching: 'A', 'B', 'C', 'D' or 'Option A', 'Option B'
+    const matchLetter = (str: string): number => {
+      const match = str.match(/^(?:option\s+)?([a-z])$/i);
+      if (match) {
+        return match[1].toLowerCase().charCodeAt(0) - 97;
+      }
+      return -1;
+    };
+
+    const corLetterIdx = matchLetter(corStr);
+    if (corLetterIdx >= 0 && corLetterIdx < optsClean.length) {
+      if (subStr === optsClean[corLetterIdx]) return true;
+    }
+    const subLetterIdx = matchLetter(subStr);
+    if (subLetterIdx >= 0 && subLetterIdx < optsClean.length) {
+      if (corStr === optsClean[subLetterIdx]) return true;
+    }
+  }
+
+  return false;
 }
 
 export class GameManager {
@@ -98,6 +153,7 @@ export class GameManager {
         streak: 0,
         lastPoints: 0,
         lastCorrect: false,
+        lastTimeTaken: 0,
         totalTimeTaken: 0,
         rank: session.participants.size + 1,
         previousRank: session.participants.size + 1,
@@ -144,7 +200,8 @@ export class GameManager {
     durationSeconds: number,
     correctAnswer: string | string[] | null,
     onTick: (count: number) => void,
-    onComplete: () => void
+    onComplete: () => void,
+    options?: string[]
   ): void {
     const session = this.getOrCreateSession(sessionId, presentationId);
 
@@ -154,6 +211,7 @@ export class GameManager {
     session.currentSlideId = slideId;
     session.durationSeconds = durationSeconds || 20;
     session.correctAnswer = correctAnswer;
+    session.options = options;
     session.answeredParticipants.clear();
 
     let count = 3;
@@ -182,7 +240,8 @@ export class GameManager {
     slideId: string,
     durationSeconds: number,
     correctAnswer: string | string[] | null,
-    onExpire: () => void
+    onExpire: () => void,
+    options?: string[]
   ): QuestionTimerState | null {
     const session = this.getOrCreateSession(sessionId, presentationId);
 
@@ -192,6 +251,7 @@ export class GameManager {
     session.currentSlideId = slideId;
     session.durationSeconds = durationSeconds || 20;
     session.correctAnswer = correctAnswer;
+    if (options) session.options = options;
     session.answeredParticipants.clear();
     session.questionStartedAt = Date.now();
 
@@ -216,7 +276,8 @@ export class GameManager {
   }
 
   /**
-   * Records a vote / quiz response and calculates Kahoot speed score
+   * Records a vote / quiz response and calculates speed score according to time taken.
+   * Faster answers strictly receive higher points.
    */
   public recordAnswer(
     sessionId: string,
@@ -229,17 +290,34 @@ export class GameManager {
     streak: number;
     totalScore: number;
     rank: number;
+    timeTaken: number;
     shouldLockEarly: boolean;
     answeredCount: number;
     totalParticipants: number;
   } | null {
     const session = this.sessions.get(sessionId);
-    if (!session || session.state !== 'QUESTION_ACTIVE') {
+    if (!session) {
       return null;
     }
 
+    // Auto-align session if on current slide but state was still transitioning
     if (session.currentSlideId !== slideId) {
-      return null;
+      if (!session.currentSlideId) {
+        session.currentSlideId = slideId;
+      } else {
+        return null;
+      }
+    }
+
+    if (session.state !== 'QUESTION_ACTIVE') {
+      if (session.state === 'COUNTDOWN' || session.state === 'LOBBY') {
+        session.state = 'QUESTION_ACTIVE';
+        if (session.questionStartedAt <= 0) {
+          session.questionStartedAt = Date.now() - 500;
+        }
+      } else {
+        return null;
+      }
     }
 
     // Double voting guard
@@ -249,31 +327,55 @@ export class GameManager {
 
     session.answeredParticipants.add(participantToken);
 
-    // Calculate time taken
+    // Calculate time taken (in seconds)
     const now = Date.now();
-    const timeTaken = Math.max(0.1, (now - session.questionStartedAt) / 1000);
-
-    // Normalize submitted answer to string representation for comparison
-    const cleanStr = (s: any) => String(s ?? '').trim().toLowerCase();
+    let elapsed = 0.5;
+    if (session.questionStartedAt > 0) {
+      elapsed = (now - session.questionStartedAt) / 1000;
+    } else {
+      session.questionStartedAt = now - 500;
+    }
+    const timeTaken = Math.max(0.1, Number(elapsed.toFixed(2)));
 
     // Evaluate correctness
     let isCorrect = false;
-    if (session.correctAnswer !== null && session.correctAnswer !== undefined) {
+    const hasCorrectConfigured =
+      session.correctAnswer !== null &&
+      session.correctAnswer !== undefined &&
+      (Array.isArray(session.correctAnswer)
+        ? session.correctAnswer.length > 0
+        : String(session.correctAnswer).trim().length > 0);
+
+    if (hasCorrectConfigured) {
       if (Array.isArray(session.correctAnswer)) {
-        const correctClean = session.correctAnswer.map(cleanStr);
         if (Array.isArray(submittedAnswer)) {
-          const submittedClean = submittedAnswer.map(cleanStr);
           isCorrect =
-            correctClean.length === submittedClean.length &&
-            correctClean.every((ans) => submittedClean.includes(ans));
+            session.correctAnswer.length === submittedAnswer.length &&
+            session.correctAnswer.every((ans) =>
+              (submittedAnswer as any[]).some((sub) =>
+                matchesAnswerOption(sub, ans, session.options)
+              )
+            );
         } else {
-          isCorrect = correctClean.includes(cleanStr(submittedAnswer));
+          isCorrect = session.correctAnswer.some((ans) =>
+            matchesAnswerOption(submittedAnswer, ans, session.options)
+          );
         }
       } else {
-        isCorrect = cleanStr(session.correctAnswer) === cleanStr(submittedAnswer);
+        if (Array.isArray(submittedAnswer)) {
+          isCorrect = (submittedAnswer as any[]).some((sub) =>
+            matchesAnswerOption(sub, session.correctAnswer, session.options)
+          );
+        } else {
+          isCorrect = matchesAnswerOption(
+            submittedAnswer,
+            session.correctAnswer,
+            session.options
+          );
+        }
       }
     } else {
-      // If no correct answer configured, award participation points (flat 1000 scaled by speed)
+      // Survey / Poll / Open mode (no correct answer designated) -> all submissions receive speed participation points
       isCorrect = true;
     }
 
@@ -287,6 +389,7 @@ export class GameManager {
         streak: 0,
         lastPoints: 0,
         lastCorrect: false,
+        lastTimeTaken: 0,
         totalTimeTaken: 0,
         rank: session.participants.size + 1,
         previousRank: session.participants.size + 1,
@@ -296,8 +399,15 @@ export class GameManager {
 
     let points = 0;
     if (isCorrect) {
-      // Speed factor: 1.0 (instant) down to 0.5 (at expiration)
-      const ratio = Math.min(1, Math.max(0, timeTaken / session.durationSeconds));
+      // Time ratio: 0.0 (fastest/instant) to 1.0 (at question expiration)
+      const duration = Math.max(1, session.durationSeconds || 20);
+      const ratio = Math.min(1, Math.max(0, timeTaken / duration));
+
+      // Speed decay formula:
+      // Instant answer (0s) -> speedFactor = 1.0 (1000 base points)
+      // Answer at 50% duration -> speedFactor = 0.75 (750 base points)
+      // Answer at deadline -> speedFactor = 0.50 (500 base points)
+      // The particular user who takes less time gets strictly higher points!
       const speedFactor = 1 - ratio * 0.5;
 
       // Streak multiplier: +10% per consecutive correct answer, up to +50%
@@ -313,6 +423,7 @@ export class GameManager {
     participant.score += points;
     participant.lastPoints = points;
     participant.lastCorrect = isCorrect;
+    participant.lastTimeTaken = timeTaken;
     participant.totalTimeTaken += timeTaken;
 
     // Recalculate ranks across participants
@@ -333,6 +444,7 @@ export class GameManager {
       streak: participant.streak,
       totalScore: participant.score,
       rank: participant.rank,
+      timeTaken,
       shouldLockEarly,
       answeredCount,
       totalParticipants,
@@ -340,7 +452,9 @@ export class GameManager {
   }
 
   /**
-   * Recalculates leaderboard rankings with tie-breaking
+   * Recalculates leaderboard rankings with tie-breaking:
+   * 1. Higher total score first
+   * 2. Tie-break: lowest totalTimeTaken first (faster cumulative answers rank higher)
    */
   private updateRankings(sessionId: string): void {
     const session = this.sessions.get(sessionId);
@@ -348,11 +462,9 @@ export class GameManager {
 
     const list = Array.from(session.participants.values());
     list.sort((a, b) => {
-      // 1. Higher score first
       if (b.score !== a.score) {
         return b.score - a.score;
       }
-      // 2. Tie-break: lowest totalTimeTaken first
       return a.totalTimeTaken - b.totalTimeTaken;
     });
 
@@ -395,6 +507,7 @@ export class GameManager {
           rank: p.rank,
           rankChange,
           lastPoints: p.lastPoints,
+          lastTimeTaken: p.lastTimeTaken,
         };
       })
       .sort((a, b) => a.rank - b.rank);
@@ -427,6 +540,7 @@ export class GameManager {
         rank: p.rank,
         rankChange: p.previousRank - p.rank,
         lastPoints: p.lastPoints,
+        lastTimeTaken: p.lastTimeTaken,
       }))
       .sort((a, b) => a.rank - b.rank);
 

@@ -83,14 +83,14 @@ export async function submitVote(
   value: string | string[] | number,
   hashedToken: string,
 ): Promise<boolean> {
-  // Deduplication check (Redis Set per slide)
-  const votersKey = keys.voters(slideId);
+  // Deduplication check (Redis Set per slide per session)
+  const votersKey = keys.voters(sessionId, slideId);
   const isNew = await redis.sadd(votersKey, hashedToken);
   if (!isNew) return false; // already voted
 
   // Normalize value(s) to strings for tally keys
   const values = Array.isArray(value) ? value : [String(value)];
-  const slideTallyKey = keys.slideTally(slideId);
+  const slideTallyKey = keys.slideTally(sessionId, slideId);
 
   // Update Redis tally (atomic, consistent across instances)
   const pipeline = redis.pipeline();
@@ -140,7 +140,7 @@ export async function hydrateSessionTally(
 ): Promise<void> {
   const sessionMap = getOrCreateSessionTally(sessionId);
   for (const slideId of slideIds) {
-    const raw = await redis.hgetall(keys.slideTally(slideId));
+    const raw = await redis.hgetall(keys.slideTally(sessionId, slideId));
     const tally: Tally = {};
     for (const [k, v] of Object.entries(raw)) {
       tally[k] = parseInt(v, 10);

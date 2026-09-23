@@ -47,8 +47,8 @@ export async function handleVote(
 
   const hashedToken = hashToken(participantToken);
 
-  // Rate-limit: one vote per slide per token
-  const limitKey = keys.voteLimit(hashedToken, slideId);
+  // Rate-limit: one vote per slide per token per session
+  const limitKey = keys.voteLimit(sessionId, hashedToken, slideId);
   const alreadyVoted = await redis.get(limitKey);
   if (alreadyVoted) {
     socket.emit('error', {
@@ -83,6 +83,7 @@ export async function handleVote(
       streak: scoreResult.streak,
       totalScore: scoreResult.totalScore,
       rank: scoreResult.rank,
+      timeTaken: scoreResult.timeTaken,
     });
 
     // Broadcast live participant answered count to presenter & session

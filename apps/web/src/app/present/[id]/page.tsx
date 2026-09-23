@@ -1177,7 +1177,27 @@ export default function PresenterLivePage() {
                       </div>
 
                       {/* Score & Rank Change */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                        {entry.lastTimeTaken !== undefined && entry.lastTimeTaken > 0 && (
+                          <span
+                            style={{
+                              fontSize: '0.85rem',
+                              fontWeight: 700,
+                              color: '#38bdf8',
+                              background: 'rgba(56, 189, 248, 0.12)',
+                              border: '1px solid rgba(56, 189, 248, 0.25)',
+                              padding: '4px 8px',
+                              borderRadius: '8px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                            }}
+                            title={`Answer speed: ${entry.lastTimeTaken}s`}
+                          >
+                            ⚡ {entry.lastTimeTaken}s
+                          </span>
+                        )}
+
                         {entry.lastPoints > 0 && (
                           <span
                             style={{
@@ -1185,6 +1205,7 @@ export default function PresenterLivePage() {
                               fontWeight: 800,
                               color: '#22c55e',
                               background: 'rgba(34, 197, 94, 0.15)',
+                              border: '1px solid rgba(34, 197, 94, 0.3)',
                               padding: '4px 10px',
                               borderRadius: '8px',
                             }}
