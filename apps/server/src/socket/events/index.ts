@@ -73,7 +73,7 @@ export function registerSocketHandlers(io: IOServer): void {
         const presentation = await prisma.presentation.findFirst({
           where: {
             joinCode: joinCode.toUpperCase(),
-            status: 'live',
+            status: { not: 'ended' },
           },
         });
 
@@ -82,7 +82,7 @@ export function registerSocketHandlers(io: IOServer): void {
           return;
         }
 
-        const session = await prisma.session.findFirst({
+        let session = await prisma.session.findFirst({
           where: {
             presentationId: presentation.id,
             status: 'active',
@@ -91,8 +91,19 @@ export function registerSocketHandlers(io: IOServer): void {
         });
 
         if (!session) {
-          socket.emit('error', { code: 'SESSION_NOT_ACTIVE', message: 'Session is not active' });
-          return;
+          session = await prisma.session.findFirst({
+            where: { presentationId: presentation.id },
+            orderBy: { startedAt: 'desc' },
+          });
+
+          if (!session) {
+            session = await prisma.session.create({
+              data: {
+                presentationId: presentation.id,
+                status: 'active',
+              },
+            });
+          }
         }
 
         const sessionId = session.id;
@@ -125,7 +136,17 @@ export function registerSocketHandlers(io: IOServer): void {
         await incrementPresence(io, sessionId);
 
         const currentGameState = gameManager.getSession(sessionId);
-        const lobbyData = gameManager.getLobbyList(sessionId);
+
+        // Auto-register attendee into gameManager lobby if nickname is provided
+        let lobbyData = gameManager.getLobbyList(sessionId);
+        if ((payload as any).nickname) {
+          lobbyData = gameManager.joinLobby(sessionId, presentationId, {
+            token: participantToken,
+            nickname: (payload as any).nickname,
+            avatar: (payload as any).avatar || '🦊',
+          });
+          io.to(`session:${sessionId}`).emit('lobby_update', lobbyData);
+        }
 
         // Send current session state to new attendee
         socket.emit('session_joined', {
@@ -369,20 +390,30 @@ export function registerSocketHandlers(io: IOServer): void {
       try {
         const { joinCode, participantToken, nickname, avatar } = payload;
         const presentation = await prisma.presentation.findFirst({
-          where: { joinCode: joinCode.toUpperCase(), status: 'live' },
+          where: { joinCode: joinCode.toUpperCase(), status: { not: 'ended' } },
         });
         if (!presentation) {
           socket.emit('error', { code: 'SESSION_NOT_FOUND', message: 'No active session found for this code' });
           return;
         }
 
-        const session = await prisma.session.findFirst({
+        let session = await prisma.session.findFirst({
           where: { presentationId: presentation.id, status: 'active' },
           orderBy: { startedAt: 'desc' },
         });
         if (!session) {
-          socket.emit('error', { code: 'SESSION_NOT_ACTIVE', message: 'Session is not active' });
-          return;
+          session = await prisma.session.findFirst({
+            where: { presentationId: presentation.id },
+            orderBy: { startedAt: 'desc' },
+          });
+          if (!session) {
+            session = await prisma.session.create({
+              data: {
+                presentationId: presentation.id,
+                status: 'active',
+              },
+            });
+          }
         }
 
         const sessionId = session.id;

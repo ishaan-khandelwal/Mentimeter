@@ -8,7 +8,11 @@ interface RouteParams {
 
 // GET /api/v1/form/:code — get presentation and slides for async form
 export async function GET(_req: Request, { params }: RouteParams) {
-  const joinCode = params.code.toUpperCase();
+  const joinCode = params?.code?.toUpperCase();
+
+  if (!joinCode) {
+    return NextResponse.json({ error: 'Invalid form code' }, { status: 400 });
+  }
 
   const presentation = await prisma.presentation.findUnique({
     where: { joinCode },
@@ -21,21 +25,27 @@ export async function GET(_req: Request, { params }: RouteParams) {
     return NextResponse.json({ error: 'Form not found' }, { status: 404 });
   }
 
+  const pres = presentation as any;
+
   // Check deadline if set
-  if (presentation.formDeadline && new Date() > new Date(presentation.formDeadline)) {
-    return NextResponse.json({ error: 'This form has expired' }, { status: 410 });
+  if (pres.formDeadline) {
+    const deadlineTime = new Date(pres.formDeadline).getTime();
+    if (!isNaN(deadlineTime) && Date.now() > deadlineTime) {
+      return NextResponse.json({ error: 'This form has expired' }, { status: 410 });
+    }
   }
 
   return NextResponse.json({
     presentation: {
-      id: presentation.id,
-      title: presentation.title,
-      joinCode: presentation.joinCode,
-      theme: presentation.theme,
-      isAsyncForm: presentation.isAsyncForm,
-      formDeadline: presentation.formDeadline?.toISOString() ?? null,
+      id: pres.id,
+      _id: pres.id,
+      title: pres.title,
+      joinCode: pres.joinCode,
+      theme: pres.theme,
+      isAsyncForm: Boolean(pres.isAsyncForm),
+      formDeadline: pres.formDeadline ? new Date(pres.formDeadline).toISOString() : null,
     },
-    slides: presentation.slides.map((s: any) => ({
+    slides: (pres.slides || []).map((s: any) => ({
       _id: s.id,
       id: s.id,
       order: s.order,
@@ -43,16 +53,20 @@ export async function GET(_req: Request, { params }: RouteParams) {
       question: s.question,
       options: (s.options as string[]) || [],
       config: (s.config as Record<string, any>) || {},
-      hideResults: s.hideResults,
-      timerSeconds: s.timerSeconds,
-      maxVotes: s.maxVotes,
+      hideResults: Boolean(s.hideResults),
+      timerSeconds: s.timerSeconds ?? null,
+      maxVotes: s.maxVotes ?? 1,
     })),
   });
 }
 
 // POST /api/v1/form/:code — submit responses asynchronously
 export async function POST(req: Request, { params }: RouteParams) {
-  const joinCode = params.code.toUpperCase();
+  const joinCode = params?.code?.toUpperCase();
+
+  if (!joinCode) {
+    return NextResponse.json({ error: 'Invalid form code' }, { status: 400 });
+  }
 
   const presentation = await prisma.presentation.findUnique({
     where: { joinCode },
@@ -62,8 +76,13 @@ export async function POST(req: Request, { params }: RouteParams) {
     return NextResponse.json({ error: 'Form not found' }, { status: 404 });
   }
 
-  if (presentation.formDeadline && new Date() > new Date(presentation.formDeadline)) {
-    return NextResponse.json({ error: 'This form has expired' }, { status: 410 });
+  const pres = presentation as any;
+
+  if (pres.formDeadline) {
+    const deadlineTime = new Date(pres.formDeadline).getTime();
+    if (!isNaN(deadlineTime) && Date.now() > deadlineTime) {
+      return NextResponse.json({ error: 'This form has expired' }, { status: 410 });
+    }
   }
 
   const body = await req.json();
@@ -92,6 +111,8 @@ export async function POST(req: Request, { params }: RouteParams) {
     });
   }
 
+  const sessionId = session.id;
+
   // Upsert responses
   const promises = Object.entries(responses).map(async ([slideId, value]) => {
     return prisma.response.upsert({
@@ -106,7 +127,7 @@ export async function POST(req: Request, { params }: RouteParams) {
       },
       create: {
         slideId,
-        sessionId: session!.id,
+        sessionId,
         presentationId: presentation.id,
         participantToken: hashedToken,
         value: value as any,

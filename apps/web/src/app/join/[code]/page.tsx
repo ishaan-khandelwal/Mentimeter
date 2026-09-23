@@ -161,22 +161,23 @@ export default function AttendeeVotingPage() {
     }
 
     const onConnect = () => {
+      const activeNick = localStorage.getItem('pollwave_nickname') || nickname || 'Swift Fox';
+      const activeAvatar = localStorage.getItem('pollwave_avatar') || avatar || '🦊';
+
       socket.emit('join_session', {
         joinCode: code,
         participantToken,
+        nickname: activeNick,
+        avatar: activeAvatar,
       });
 
-      // Auto-join lobby if nickname already established
-      const savedNick = localStorage.getItem('pollwave_nickname') || nickname;
-      const savedAvatar = localStorage.getItem('pollwave_avatar') || avatar;
-      if (savedNick) {
-        socket.emit('join_lobby', {
-          joinCode: code,
-          participantToken,
-          nickname: savedNick,
-          avatar: savedAvatar,
-        });
-      }
+      // Register immediately in lobby so attendee is visible right away to presenter
+      socket.emit('join_lobby', {
+        joinCode: code,
+        participantToken,
+        nickname: activeNick,
+        avatar: activeAvatar,
+      });
     };
 
     const onSessionJoined = (data: {

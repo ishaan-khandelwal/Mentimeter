@@ -52,6 +52,11 @@ async function main() {
     const cleanClient = config.clientUrl.replace(/\/$/, '');
     if (cleanOrigin === cleanClient || cleanOrigin === 'http://localhost:3000') return true;
     if (cleanOrigin.endsWith('.vercel.app')) return true;
+    // Allow local network IPs (e.g. mobile devices scanning QR on same WiFi)
+    if (/^https?:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|localhost|127\.0\.0\.1)(:\d+)?$/.test(cleanOrigin)) {
+      return true;
+    }
+    if (config.nodeEnv !== 'production') return true;
     return false;
   };
 

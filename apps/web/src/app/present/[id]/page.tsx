@@ -145,7 +145,21 @@ export default function PresenterLivePage() {
         }
 
         if (data.presentation?.joinCode) {
-          const joinUrl = `${window.location.origin}/join/${data.presentation.joinCode}`;
+          let hostOrigin = window.location.origin;
+          if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            try {
+              const netRes = await fetch('/api/v1/network-info');
+              if (netRes.ok) {
+                const { localIp } = await netRes.json();
+                if (localIp && localIp !== 'localhost') {
+                  hostOrigin = `http://${localIp}:${window.location.port || '3000'}`;
+                }
+              }
+            } catch {
+              // fallback to window.location.origin
+            }
+          }
+          const joinUrl = `${hostOrigin}/join/${data.presentation.joinCode}`;
           const qr = await QRCode.toDataURL(joinUrl, { margin: 2, width: 300 });
           setQrCodeUrl(qr);
         }
@@ -719,7 +733,7 @@ export default function PresenterLivePage() {
               }}
             >
               <div style={{ color: 'var(--color-text-secondary)', fontSize: '1.2rem' }}>
-                Go to <strong style={{ color: '#fffaf3' }}>{typeof window !== 'undefined' ? window.location.host : 'pollwave.io'}/join</strong>
+                Go to <strong style={{ color: 'var(--color-text-primary)' }}>{typeof window !== 'undefined' ? window.location.host : 'pollwave.io'}/join</strong>
               </div>
               <div
                 style={{
@@ -746,8 +760,8 @@ export default function PresenterLivePage() {
 
             {/* Players Joined Counter */}
             <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px' }}>
-              <span style={{ fontSize: '1.3rem', fontWeight: 800, color: '#3f9a73' }}>
-                👥 {lobbyParticipants.length} Players Joined
+              <span style={{ fontSize: '1.3rem', fontWeight: 800, color: '#2f8f6b' }}>
+                👥 {lobbyParticipants.length} {lobbyParticipants.length === 1 ? 'Player' : 'Players'} Joined
               </span>
             </div>
 
@@ -761,34 +775,35 @@ export default function PresenterLivePage() {
                 maxHeight: '220px',
                 overflowY: 'auto',
                 padding: '16px',
-                background: 'rgba(92, 54, 73, 0.04)',
+                background: 'rgba(255, 255, 255, 0.75)',
                 borderRadius: '18px',
-                border: '1px solid rgba(92, 54, 73, 0.07)',
+                border: '1px solid rgba(92, 54, 73, 0.12)',
+                boxShadow: 'inset 0 2px 8px rgba(63, 41, 64, 0.04)',
                 marginBottom: '36px',
               }}
             >
               {lobbyParticipants.length === 0 ? (
-                <div style={{ color: 'var(--color-text-muted)', fontSize: '1.1rem', padding: '20px' }}>
-                  Waiting for players to enter their nicknames...
+                <div style={{ color: 'var(--color-text-secondary)', fontSize: '1.05rem', padding: '20px', fontWeight: 500 }}>
+                  Waiting for players to join with QR code or PIN...
                 </div>
               ) : (
                 lobbyParticipants.map((p) => (
                   <div
-                    key={p.token}
+                    key={p.token || p.nickname}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
-                      padding: '8px 16px',
+                      padding: '8px 18px',
                       borderRadius: '100px',
-                      background: 'rgba(92, 54, 73, 0.08)',
-                      border: '1px solid rgba(92, 54, 73, 0.14)',
-                      boxShadow: '0 4px 12px rgba(63,41,64,0.2)',
+                      background: 'rgba(255, 255, 255, 0.95)',
+                      border: '1.5px solid rgba(92, 54, 73, 0.15)',
+                      boxShadow: '0 4px 14px rgba(63, 41, 64, 0.08)',
                       animation: 'popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
                     }}
                   >
-                    <span style={{ fontSize: '1.4rem' }}>{p.avatar}</span>
-                    <span style={{ fontWeight: 700, fontSize: '1rem', color: '#fffaf3' }}>{p.nickname}</span>
+                    <span style={{ fontSize: '1.5rem' }}>{p.avatar}</span>
+                    <span style={{ fontWeight: 800, fontSize: '1rem', color: '#3f2940' }}>{p.nickname}</span>
                   </div>
                 ))
               )}
