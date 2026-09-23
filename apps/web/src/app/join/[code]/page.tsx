@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { getSocket } from '@/lib/socket';
 import { getParticipantToken } from '@/lib/participant';
@@ -88,6 +88,14 @@ export default function AttendeeVotingPage() {
   const participantToken = useMemo(() => {
     return typeof window !== 'undefined' ? getParticipantToken() : '';
   }, []);
+
+  // Ref to always have the latest currentSlideId inside socket callbacks
+  // (avoids adding currentSlideId to the socket useEffect deps which would
+  // re-register all handlers on every slide change)
+  const currentSlideIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    currentSlideIdRef.current = currentSlideId;
+  }, [currentSlideId]);
 
   // Initialize nickname and avatar from localStorage
   useEffect(() => {
@@ -215,8 +223,9 @@ export default function AttendeeVotingPage() {
 
     const onError = (data: { code: string; message: string }) => {
       if (data.code === 'ALREADY_VOTED') {
-        if (currentSlideId) {
-          setVotedSlides((prev) => ({ ...prev, [currentSlideId]: true }));
+        const slideId = currentSlideIdRef.current;
+        if (slideId) {
+          setVotedSlides((prev) => ({ ...prev, [slideId]: true }));
         }
         return;
       }

@@ -849,7 +849,7 @@ export default function PresenterLivePage() {
                         border: '1px solid rgba(239, 68, 68, 0.4)',
                       }}
                     >
-                      🔒 TIME'S UP
+                      🔒 TIME&apos;S UP
                     </span>
                     <button onClick={handleRevealAnswer} className="btn btn--primary btn--sm" style={{ padding: '8px 20px' }}>
                       ✨ Reveal Answer
