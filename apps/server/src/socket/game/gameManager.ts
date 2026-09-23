@@ -283,7 +283,7 @@ export class GameManager {
     sessionId: string,
     slideId: string,
     participantToken: string,
-    submittedAnswer: string | number | string[]
+    submittedAnswer: string | number | string[] | Record<string, any>
   ): {
     pointsEarned: number;
     isCorrect: boolean;

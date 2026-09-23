@@ -324,12 +324,15 @@ export default function PresenterLivePage() {
     };
   }, [presentation, id]);
 
-  // REST Polling Fallback for Lobby Participants (ensures real-time sync across Vercel / serverless / local)
+  // REST Polling Fallback for Lobby Participants (backup if WebSocket is not receiving)
   useEffect(() => {
     if (gameState !== 'LOBBY' || !id) return;
 
     let isMounted = true;
     const pollLobby = async () => {
+      // If socket is connected and participants exist, socket events already handle real-time lobby updates
+      const socket = getSocket();
+      if (socket?.connected && lobbyParticipants.length > 0) return;
       try {
         const res = await fetch(`/api/v1/presentations/${id}/lobby`);
         if (res.ok && isMounted) {
@@ -356,12 +359,12 @@ export default function PresenterLivePage() {
     };
 
     pollLobby();
-    const interval = setInterval(pollLobby, 1500);
+    const interval = setInterval(pollLobby, 4000);
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [gameState, id]);
+  }, [gameState, id, lobbyParticipants.length]);
 
   const currentIndex = slides.findIndex((s) => s._id === currentSlideId);
   const activeSlide = slides[currentIndex] || slides[0] || null;
@@ -385,12 +388,15 @@ export default function PresenterLivePage() {
     return () => clearInterval(timer);
   }, [gameState, activeSlide]);
 
-  // Live REST tallies & answered counts sync (bulletproof real-time backup to WebSockets)
+  // Live REST tallies & answered counts sync (backup to WebSockets)
   useEffect(() => {
     if (!id || (gameState !== 'QUESTION_ACTIVE' && gameState !== 'QUESTION_LOCKED' && gameState !== 'REVEAL')) return;
 
     let isMounted = true;
     const syncVotes = async () => {
+      // If socket is connected and working, socket events already handle real-time tallies & timer updates
+      const socket = getSocket();
+      if (socket?.connected) return;
       try {
         const res = await fetch(`/api/v1/presentations/${id}/vote`);
         if (res.ok && isMounted) {
@@ -413,7 +419,7 @@ export default function PresenterLivePage() {
     };
 
     syncVotes();
-    const interval = setInterval(syncVotes, 1500);
+    const interval = setInterval(syncVotes, 4000);
     return () => {
       isMounted = false;
       clearInterval(interval);
