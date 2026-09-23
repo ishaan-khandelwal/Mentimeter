@@ -53,10 +53,16 @@ export default function QuizRaceLeaderboard({
     }
 
     // Sort descending by score, tiebreak by fastest total response time or original rank
-    return list.sort((a, b) => {
+    const sorted = list.sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
       return (a.rank || 0) - (b.rank || 0);
     });
+
+    sorted.forEach((item, idx) => {
+      item.rank = idx + 1;
+    });
+
+    return sorted;
   }, [leaderboard, lobbyParticipants]);
 
   // Top 6 racers appear on the track lanes

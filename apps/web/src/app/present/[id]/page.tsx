@@ -359,6 +359,28 @@ export default function PresenterLivePage() {
     };
   }, [gameState, id]);
 
+  const currentIndex = slides.findIndex((s) => s._id === currentSlideId);
+  const activeSlide = slides[currentIndex] || slides[0] || null;
+
+  // Local countdown fallback when in COUNTDOWN state
+  useEffect(() => {
+    if (gameState !== 'COUNTDOWN') return;
+
+    const timer = setInterval(() => {
+      setCountdownNumber((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          setGameState('QUESTION_ACTIVE');
+          setRemainingTime((activeSlide?.config as any)?.durationSeconds || 20);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [gameState, activeSlide]);
+
   // Question active timer countdown effect
   useEffect(() => {
     if (gameState !== 'QUESTION_ACTIVE' || !timerState) return;
@@ -399,9 +421,6 @@ export default function PresenterLivePage() {
       return () => clearInterval(interval);
     }
   }, [gameState]);
-
-  const currentIndex = slides.findIndex((s) => s._id === currentSlideId);
-  const activeSlide = slides[currentIndex] || slides[0] || null;
 
   // Slide controls
   const handleNextSlide = () => {
@@ -472,57 +491,74 @@ export default function PresenterLivePage() {
   };
 
   const handleLockQuestion = () => {
-    if (!sessionId) return;
-    const socket = getSocket();
-    socket.emit('advance_quiz', {
-      sessionId,
-      targetState: 'QUESTION_LOCKED',
-    });
+    setVotingLocked(true);
+    setGameState('QUESTION_LOCKED');
+    if (sessionId) {
+      const socket = getSocket();
+      socket.emit('advance_quiz', {
+        sessionId,
+        targetState: 'QUESTION_LOCKED',
+      });
+    }
   };
 
   const handleRevealAnswer = () => {
-    if (!sessionId) return;
-    const socket = getSocket();
-    socket.emit('advance_quiz', {
-      sessionId,
-      targetState: 'REVEAL',
-    });
+    setGameState('REVEAL');
+    if (sessionId) {
+      const socket = getSocket();
+      socket.emit('advance_quiz', {
+        sessionId,
+        targetState: 'REVEAL',
+      });
+    }
   };
 
   const handleShowLeaderboard = () => {
-    if (!sessionId) return;
-    const socket = getSocket();
-    socket.emit('advance_quiz', {
-      sessionId,
-      targetState: 'LEADERBOARD',
-    });
+    setGameState('LEADERBOARD');
+    if (sessionId) {
+      const socket = getSocket();
+      socket.emit('advance_quiz', {
+        sessionId,
+        targetState: 'LEADERBOARD',
+      });
+    }
   };
 
   const handleNextQuestion = () => {
-    if (!sessionId) return;
-    const socket = getSocket();
     if (currentIndex < slides.length - 1) {
       const nextSlide = slides[currentIndex + 1];
-      socket.emit('advance_quiz', {
-        sessionId,
-        targetState: 'COUNTDOWN',
-        nextSlideId: nextSlide._id,
-      });
+      setCurrentSlideId(nextSlide._id);
+      setGameState('COUNTDOWN');
+      setCountdownNumber(3);
+      if (sessionId) {
+        const socket = getSocket();
+        socket.emit('advance_quiz', {
+          sessionId,
+          targetState: 'COUNTDOWN',
+          nextSlideId: nextSlide._id,
+        });
+      }
     } else {
+      setGameState('FINAL_RESULTS');
+      if (sessionId) {
+        const socket = getSocket();
+        socket.emit('advance_quiz', {
+          sessionId,
+          targetState: 'FINAL_RESULTS',
+        });
+      }
+    }
+  };
+
+  const handleShowFinalResults = () => {
+    setGameState('FINAL_RESULTS');
+    if (sessionId) {
+      const socket = getSocket();
       socket.emit('advance_quiz', {
         sessionId,
         targetState: 'FINAL_RESULTS',
       });
     }
-  };
-
-  const handleShowFinalResults = () => {
-    if (!sessionId) return;
-    const socket = getSocket();
-    socket.emit('advance_quiz', {
-      sessionId,
-      targetState: 'FINAL_RESULTS',
-    });
   };
 
   // Generate Claude AI summary of audience responses
@@ -1081,11 +1117,13 @@ export default function PresenterLivePage() {
                           borderRadius: '20px',
                           background: isCorrectAnswer
                             ? 'rgba(34, 197, 94, 0.18)'
-                            : 'rgba(92, 54, 73, 0.06)',
+                            : 'rgba(255, 255, 255, 0.95)',
                           border: isCorrectAnswer
                             ? '3px solid #3f9a73'
-                            : '2px solid rgba(92, 54, 73, 0.10)',
-                          boxShadow: isCorrectAnswer ? '0 0 30px rgba(34, 197, 94, 0.4)' : 'none',
+                            : '2px solid rgba(92, 54, 73, 0.12)',
+                          boxShadow: isCorrectAnswer
+                            ? '0 0 30px rgba(34, 197, 94, 0.35)'
+                            : '0 4px 18px rgba(63, 41, 64, 0.06)',
                           padding: '24px',
                           position: 'relative',
                           overflow: 'hidden',
@@ -1106,7 +1144,7 @@ export default function PresenterLivePage() {
                               top: 0,
                               bottom: 0,
                               width: `${percent}%`,
-                              background: isCorrectAnswer ? 'rgba(34, 197, 94, 0.25)' : `${colorScheme.bg}25`,
+                              background: isCorrectAnswer ? 'rgba(34, 197, 94, 0.25)' : `${colorScheme.bg}22`,
                               borderRight: isCorrectAnswer ? '3px solid #3f9a73' : `3px solid ${colorScheme.bg}`,
                               zIndex: 0,
                               transition: 'width 0.6s cubic-bezier(0.16, 1, 0.3, 1)',
@@ -1127,12 +1165,12 @@ export default function PresenterLivePage() {
                               alignItems: 'center',
                               justifyContent: 'center',
                               fontSize: '1.4rem',
-                              boxShadow: '0 4px 12px rgba(63,41,64,0.3)',
+                              boxShadow: '0 4px 12px rgba(63,41,64,0.2)',
                             }}
                           >
                             {colorScheme.symbol}
                           </span>
-                          <span style={{ fontSize: '1.35rem', fontWeight: 700, color: '#fffaf3', flex: 1 }}>
+                          <span style={{ fontSize: '1.35rem', fontWeight: 800, color: '#3f2940', flex: 1 }}>
                             {opt}
                           </span>
                           {isCorrectAnswer && (
@@ -1165,10 +1203,10 @@ export default function PresenterLivePage() {
                               marginTop: '16px',
                             }}
                           >
-                            <span style={{ fontSize: '1.05rem', color: 'var(--color-text-secondary)', fontWeight: 600 }}>
+                            <span style={{ fontSize: '1.05rem', color: '#8d7a87', fontWeight: 700 }}>
                               {votes} {votes === 1 ? 'vote' : 'votes'}
                             </span>
-                            <span style={{ fontSize: '1.8rem', fontWeight: 900, color: isCorrectAnswer ? '#2f8f6b' : '#fffaf3' }}>
+                            <span style={{ fontSize: '1.8rem', fontWeight: 900, color: isCorrectAnswer ? '#2f8f6b' : '#3f2940' }}>
                               {percent}%
                             </span>
                           </div>

@@ -324,7 +324,7 @@ export default function AttendeeVotingPage() {
 
     let isMounted = true;
 
-    // Immediate fetch to guarantee connection without getting stuck on "Joining Session..."
+    // Immediate fetch to guarantee initial connection without getting stuck on "Joining Session..."
     const syncLobby = async () => {
       try {
         const activeNick = localStorage.getItem('pollwave_nickname') || nickname || 'Swift Fox';
@@ -354,6 +354,7 @@ export default function AttendeeVotingPage() {
           if (data.votingLocked !== undefined) {
             setVotingLocked(data.votingLocked);
           }
+          // ONLY advance forward; NEVER revert an active quiz to LOBBY!
           if (data.gameState && data.gameState !== 'LOBBY') {
             setGameState(data.gameState);
           }
@@ -367,14 +368,18 @@ export default function AttendeeVotingPage() {
 
     syncLobby();
 
-    // Poll periodically while in LOBBY to catch when presenter starts the quiz
+    // CRITICAL: ONLY poll while waiting in LOBBY for the host to launch the quiz.
+    // If the quiz is already active (COUNTDOWN, QUESTION_ACTIVE, REVEAL, etc.), do NOT poll lobby!
+    if (gameState !== 'LOBBY') return;
+
     const pollInterval = setInterval(async () => {
       if (!isMounted) return;
       try {
         const res = await fetch(`/api/v1/presentations/${code}/lobby`);
         if (res.ok && isMounted) {
           const data = await res.json();
-          if (data.gameState && data.gameState !== gameState) {
+          // Only transition forward into the quiz
+          if (data.gameState && data.gameState !== 'LOBBY') {
             setGameState(data.gameState);
           }
           if (data.currentSlideId && currentSlideIdRef.current !== data.currentSlideId) {
@@ -392,6 +397,25 @@ export default function AttendeeVotingPage() {
       clearInterval(pollInterval);
     };
   }, [code, participantToken, nickname, avatar, gameState]);
+
+  // Local Countdown Fallback (guarantees transition to question even if socket is delayed)
+  useEffect(() => {
+    if (gameState !== 'COUNTDOWN') return;
+
+    const timer = setInterval(() => {
+      setCountdownNumber((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          setGameState('QUESTION_ACTIVE');
+          setRemainingTime(activeSlide?.config?.durationSeconds || 20);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [gameState, activeSlide]);
 
   // Question timer countdown effect
   useEffect(() => {
@@ -1093,7 +1117,7 @@ export default function AttendeeVotingPage() {
                       Answer Submitted!
                     </h3>
                     <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.95rem' }}>
-                      You selected: <strong style={{ color: '#fffaf3' }}>{mySubmittedAnswer}</strong>
+                      You selected: <strong style={{ color: '#3f2940', fontWeight: 800 }}>{mySubmittedAnswer}</strong>
                     </p>
                     <p style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem', marginTop: '12px' }}>
                       Waiting for presenter to reveal correct answer...

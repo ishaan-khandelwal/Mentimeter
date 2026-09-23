@@ -54,41 +54,16 @@ export async function GET(_req: Request, { params }: RouteParams) {
   const activeSession = presentation.sessions[0];
   const firstSlide = presentation.slides[0];
 
-  // 1. Fetch participants stored in DB responses
-  let dbParticipants: Array<{ token: string; nickname: string; avatar: string }> = [];
-  if (firstSlide) {
-    try {
-      const responses = await prisma.response.findMany({
-        where: {
-          presentationId: presentation.id,
-          slideId: firstSlide.id,
-        },
-        select: {
-          participantToken: true,
-          value: true,
-        },
-      });
-
-      dbParticipants = responses
-        .map((r) => {
-          const val = r.value as any;
-          if (!val || val.type !== 'lobby') return null;
-          return {
-            token: r.participantToken,
-            nickname: val.nickname || 'Player',
-            avatar: val.avatar || '🦊',
-          };
-        })
-        .filter((p): p is { token: string; nickname: string; avatar: string } => p !== null);
-    } catch {}
-  }
-
-  // 2. Merge with in-memory lobby
+  // 1. Merge participants from in-memory lobby
   const lobbyState = getOrCreateLobby(getLobbyKey(presentation.id));
-  const merged = new Map<string, { token: string; nickname: string; avatar: string }>();
+  const codeKey = getLobbyKey(presentation.joinCode);
+  const codeLobby = memoryLobby.get(codeKey);
 
-  dbParticipants.forEach((p) => merged.set(p.token, p));
+  const merged = new Map<string, { token: string; nickname: string; avatar: string }>();
   lobbyState.participants.forEach((p) => merged.set(p.token, { token: p.token, nickname: p.nickname, avatar: p.avatar }));
+  if (codeLobby && codeLobby !== lobbyState) {
+    codeLobby.participants.forEach((p) => merged.set(p.token, { token: p.token, nickname: p.nickname, avatar: p.avatar }));
+  }
 
   const participants = Array.from(merged.values());
 
@@ -202,32 +177,6 @@ export async function POST(req: Request, { params }: RouteParams) {
     });
   }
 
-  // Persist into database via first slide response
-  const firstSlide = presentation.slides[0];
-  if (firstSlide) {
-    try {
-      await prisma.response.upsert({
-        where: {
-          slideId_participantToken: {
-            slideId: firstSlide.id,
-            participantToken: hashedToken,
-          },
-        },
-        update: {
-          value: { type: 'lobby', nickname: cleanNick, avatar: cleanAvatar, updatedAt: Date.now() },
-        },
-        create: {
-          slideId: firstSlide.id,
-          sessionId: session.id,
-          presentationId: presentation.id,
-          participantToken: hashedToken,
-          value: { type: 'lobby', nickname: cleanNick, avatar: cleanAvatar, joinedAt: Date.now() },
-        },
-      });
-    } catch (err) {
-      console.warn('[Lobby API] Failed to persist participant in DB:', err);
-    }
-  }
 
   const allInPres = Array.from(lobbyState.participants.values());
 
