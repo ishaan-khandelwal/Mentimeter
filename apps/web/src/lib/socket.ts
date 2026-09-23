@@ -9,7 +9,8 @@ function getSocketUrl(): string {
     }
     // If browsing from a local network IP (e.g. mobile phone scanning QR on same WiFi)
     const hostname = window.location.hostname;
-    if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+    const isPrivateLanIp = /^(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/.test(hostname);
+    if (isPrivateLanIp) {
       return `http://${hostname}:4000`;
     }
   }

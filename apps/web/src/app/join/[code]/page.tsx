@@ -178,6 +178,17 @@ export default function AttendeeVotingPage() {
         nickname: activeNick,
         avatar: activeAvatar,
       });
+
+      // Also persist to lobby via REST API for serverless/Vercel environments
+      fetch(`/api/v1/presentations/${code}/lobby`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          participantToken,
+          nickname: activeNick,
+          avatar: activeAvatar,
+        }),
+      }).catch(() => {});
     };
 
     const onSessionJoined = (data: {
@@ -307,6 +318,81 @@ export default function AttendeeVotingPage() {
     };
   }, [code, participantToken, nickname, avatar]);
 
+  // Fallback REST polling for lobby & session state to sync seamlessly on Vercel/serverless
+  useEffect(() => {
+    if (!code || !participantToken) return;
+
+    let isMounted = true;
+
+    // Immediate fetch to guarantee connection without getting stuck on "Joining Session..."
+    const syncLobby = async () => {
+      try {
+        const activeNick = localStorage.getItem('pollwave_nickname') || nickname || 'Swift Fox';
+        const activeAvatar = localStorage.getItem('pollwave_avatar') || avatar || '🦊';
+
+        // 1. Register attendee into lobby via REST
+        await fetch(`/api/v1/presentations/${code}/lobby`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            participantToken,
+            nickname: activeNick,
+            avatar: activeAvatar,
+          }),
+        }).catch(() => {});
+
+        // 2. Fetch lobby & slide details
+        const res = await fetch(`/api/v1/presentations/${code}/lobby`);
+        if (res.ok && isMounted) {
+          const data = await res.json();
+          if (Array.isArray(data.slides) && data.slides.length > 0) {
+            setSlides(data.slides);
+          }
+          if (data.currentSlideId) {
+            setCurrentSlideId(data.currentSlideId);
+          }
+          if (data.votingLocked !== undefined) {
+            setVotingLocked(data.votingLocked);
+          }
+          if (data.gameState && data.gameState !== 'LOBBY') {
+            setGameState(data.gameState);
+          }
+          // Mark as connected so attendee can immediately interact
+          setStatus('connected');
+        }
+      } catch (err) {
+        console.warn('[Lobby Sync Fallback]', err);
+      }
+    };
+
+    syncLobby();
+
+    // Poll periodically while in LOBBY to catch when presenter starts the quiz
+    const pollInterval = setInterval(async () => {
+      if (!isMounted) return;
+      try {
+        const res = await fetch(`/api/v1/presentations/${code}/lobby`);
+        if (res.ok && isMounted) {
+          const data = await res.json();
+          if (data.gameState && data.gameState !== gameState) {
+            setGameState(data.gameState);
+          }
+          if (data.currentSlideId && currentSlideIdRef.current !== data.currentSlideId) {
+            setCurrentSlideId(data.currentSlideId);
+          }
+          if (Array.isArray(data.slides) && (!slides || slides.length === 0)) {
+            setSlides(data.slides);
+          }
+        }
+      } catch {}
+    }, 1500);
+
+    return () => {
+      isMounted = false;
+      clearInterval(pollInterval);
+    };
+  }, [code, participantToken, nickname, avatar, gameState]);
+
   // Question timer countdown effect
   useEffect(() => {
     if (gameState !== 'QUESTION_ACTIVE' || !timerState) return;
@@ -347,6 +433,17 @@ export default function AttendeeVotingPage() {
       nickname: cleanNick,
       avatar,
     });
+
+    // Update lobby via REST API for serverless/Vercel environments
+    fetch(`/api/v1/presentations/${code}/lobby`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        participantToken,
+        nickname: cleanNick,
+        avatar,
+      }),
+    }).catch(() => {});
 
     setHasJoinedLobby(true);
   };

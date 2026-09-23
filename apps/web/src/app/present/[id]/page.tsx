@@ -320,6 +320,45 @@ export default function PresenterLivePage() {
     };
   }, [presentation, id]);
 
+  // REST Polling Fallback for Lobby Participants (ensures real-time sync across Vercel / serverless / local)
+  useEffect(() => {
+    if (gameState !== 'LOBBY' || !id) return;
+
+    let isMounted = true;
+    const pollLobby = async () => {
+      try {
+        const res = await fetch(`/api/v1/presentations/${id}/lobby`);
+        if (res.ok && isMounted) {
+          const data = await res.json();
+          if (data.participants && Array.isArray(data.participants)) {
+            setLobbyParticipants((prev) => {
+              const merged = [...prev];
+              data.participants.forEach((p: any) => {
+                const exists = merged.some(
+                  (m) => (p.token && m.token === p.token) || (m.nickname && m.nickname.toLowerCase() === p.nickname.toLowerCase())
+                );
+                if (!exists) {
+                  merged.push(p);
+                }
+              });
+              return merged;
+            });
+            if (data.count) {
+              setPresenceCount((prev) => Math.max(prev, data.count));
+            }
+          }
+        }
+      } catch {}
+    };
+
+    pollLobby();
+    const interval = setInterval(pollLobby, 1500);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [gameState, id]);
+
   // Question active timer countdown effect
   useEffect(() => {
     if (gameState !== 'QUESTION_ACTIVE' || !timerState) return;
@@ -399,13 +438,29 @@ export default function PresenterLivePage() {
 
   // Game Loop Controls
   const handleStartQuiz = () => {
-    if (!sessionId || slides.length === 0) return;
+    if (slides.length === 0) return;
     const socket = getSocket();
-    socket.emit('advance_quiz', {
-      sessionId,
-      targetState: 'COUNTDOWN',
-      nextSlideId: slides[0]._id,
-    });
+    if (sessionId) {
+      socket.emit('advance_quiz', {
+        sessionId,
+        targetState: 'COUNTDOWN',
+        nextSlideId: slides[0]._id,
+      });
+    }
+
+    // Also trigger via REST so serverless/Vercel attendees transition immediately
+    fetch(`/api/v1/presentations/${id}/lobby`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'START_QUIZ', currentSlideId: slides[0]._id }),
+    }).catch(() => {});
+
+    // Ensure presenter screen transitions into countdown without waiting
+    setGameState('COUNTDOWN');
+    setCountdownNumber(3);
+    if (slides[0]?._id) {
+      setCurrentSlideId(slides[0]._id);
+    }
   };
 
   const handleToggleVoting = () => {
@@ -689,9 +744,10 @@ export default function PresenterLivePage() {
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            justifyContent: 'center',
-            padding: '40px 24px',
+            justifyContent: 'flex-start',
+            padding: '36px 24px 120px',
             background: 'radial-gradient(ellipse at center, rgba(217, 87, 69, 0.12) 0%, rgba(251, 247, 240, 1) 70%)',
+            overflowY: 'auto',
           }}
         >
           <div style={{ maxWidth: '850px', width: '100%', textAlign: 'center' }}>
@@ -809,20 +865,26 @@ export default function PresenterLivePage() {
               )}
             </div>
 
-            {/* Start Quiz CTA */}
-            <button
-              onClick={handleStartQuiz}
-              className="btn btn--primary"
-              style={{
-                fontSize: '1.35rem',
-                padding: '16px 48px',
-                borderRadius: '100px',
-                fontWeight: 800,
-                boxShadow: '0 8px 30px rgba(217, 87, 69, 0.5)',
-              }}
-            >
-              🚀 Start Quiz
-            </button>
+            {/* Start Quiz CTA - Centered and fully unobstructed */}
+            <div style={{ marginTop: '28px', marginBottom: '32px', display: 'flex', justifyContent: 'center' }}>
+              <button
+                onClick={handleStartQuiz}
+                className="btn btn--primary"
+                style={{
+                  fontSize: '1.45rem',
+                  padding: '18px 56px',
+                  borderRadius: '100px',
+                  fontWeight: 900,
+                  boxShadow: '0 10px 32px rgba(217, 87, 69, 0.55)',
+                  cursor: 'pointer',
+                  zIndex: 20,
+                  position: 'relative',
+                  letterSpacing: '-0.01em',
+                }}
+              >
+                🚀 Start Quiz ({slides.length} Questions)
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1639,25 +1701,26 @@ export default function PresenterLivePage() {
         </div>
       )}
 
-      {/* Floating Presenter Toolbar */}
-      <div
-        style={{
-          position: 'fixed',
-          bottom: 24,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          background: 'rgba(241, 231, 220, 0.88)',
-          backdropFilter: 'blur(16px)',
-          border: '1px solid rgba(92, 54, 73, 0.14)',
-          borderRadius: '100px',
-          padding: '8px 16px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '12px',
-          zIndex: 900,
-          boxShadow: '0 12px 32px rgba(63, 41, 64, 0.5)',
-        }}
-      >
+      {/* Floating Presenter Toolbar (Hidden during LOBBY to keep Start Quiz prominent) */}
+      {gameState !== 'LOBBY' && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 24,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(241, 231, 220, 0.88)',
+            backdropFilter: 'blur(16px)',
+            border: '1px solid rgba(92, 54, 73, 0.14)',
+            borderRadius: '100px',
+            padding: '8px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            zIndex: 900,
+            boxShadow: '0 12px 32px rgba(63, 41, 64, 0.5)',
+          }}
+        >
         <button
           onClick={handlePrevSlide}
           disabled={currentIndex <= 0}
@@ -1742,6 +1805,7 @@ export default function PresenterLivePage() {
           ⛶
         </button>
       </div>
+      )}
 
       {/* Push Announcement Modal */}
       {showAnnouncementModal && (
