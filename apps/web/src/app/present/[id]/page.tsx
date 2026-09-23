@@ -82,6 +82,7 @@ export default function PresenterLivePage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [showAiSummaryModal, setShowAiSummaryModal] = useState(false);
 
+  const [authError, setAuthError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Load presentation and slides
@@ -90,7 +91,11 @@ export default function PresenterLivePage() {
       try {
         const res = await fetch(`/api/v1/presentations/${id}`);
         if (!res.ok) {
-          router.push('/dashboard');
+          if (res.status === 401) {
+            setAuthError('UNAUTHORIZED');
+          } else {
+            setAuthError('NOT_FOUND');
+          }
           return;
         }
         const data = await res.json();
@@ -138,7 +143,15 @@ export default function PresenterLivePage() {
         }
 
         const { token } = await tokenRes.json();
-        socket.emit('start_session', { presentationId: id, token });
+        const emitStart = () => {
+          socket.emit('start_session', { presentationId: id, token });
+        };
+
+        if (socket.connected) {
+          emitStart();
+        } else {
+          socket.once('connect', emitStart);
+        }
       } catch (err) {
         console.error('Presenter auth error:', err);
       }
@@ -146,10 +159,12 @@ export default function PresenterLivePage() {
 
     authPresenter();
 
-    const onSessionStarted = (data: { sessionId: string; currentSlideId: string; votingLocked: boolean }) => {
+    const onSessionStarted = (data: any) => {
       setSessionId(data.sessionId);
       setCurrentSlideId(data.currentSlideId);
       setVotingLocked(data.votingLocked);
+      if (data.gameState) setGameState(data.gameState);
+      if (data.lobby?.participants) setLobbyParticipants(data.lobby.participants);
     };
 
     const onPresenterJoined = (data: any) => {
@@ -431,6 +446,41 @@ export default function PresenterLivePage() {
   const totalVotes = useMemo(() => {
     return Object.values(currentTally).reduce((sum, val) => sum + val, 0);
   }, [currentTally]);
+
+  if (authError === 'UNAUTHORIZED') {
+    return (
+      <div className="container" style={{ padding: '80px 24px', textAlign: 'center', maxWidth: '480px', margin: '0 auto' }}>
+        <div style={{ fontSize: '3rem', marginBottom: '16px' }}>🔒</div>
+        <h2 style={{ fontSize: '1.8rem', fontWeight: 800, marginBottom: '8px' }}>Presenter Sign In Required</h2>
+        <p style={{ color: 'var(--color-text-secondary)', marginBottom: '24px', lineHeight: 1.5 }}>
+          You must be signed in as the owner of this presentation to host and present it live.
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <Link href={`/login?callbackUrl=/present/${id}`} className="btn btn--primary">
+            Sign In to Present
+          </Link>
+          <Link href="/join" className="btn btn--ghost">
+            Are you an attendee? Join here with code
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (authError === 'NOT_FOUND') {
+    return (
+      <div className="container" style={{ padding: '80px 24px', textAlign: 'center', maxWidth: '480px', margin: '0 auto' }}>
+        <div style={{ fontSize: '3rem', marginBottom: '16px' }}>🔍</div>
+        <h2 style={{ fontSize: '1.8rem', fontWeight: 800, marginBottom: '8px' }}>Presentation Not Found</h2>
+        <p style={{ color: 'var(--color-text-secondary)', marginBottom: '24px', lineHeight: 1.5 }}>
+          This presentation does not exist or has been removed.
+        </p>
+        <Link href="/dashboard" className="btn btn--primary">
+          Back to Dashboard
+        </Link>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

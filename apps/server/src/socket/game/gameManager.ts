@@ -139,14 +139,14 @@ export class GameManager {
    */
   public startCountdown(
     sessionId: string,
+    presentationId: string,
     slideId: string,
     durationSeconds: number,
     correctAnswer: string | string[] | null,
     onTick: (count: number) => void,
     onComplete: () => void
   ): void {
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
+    const session = this.getOrCreateSession(sessionId, presentationId);
 
     this.clearTimers(sessionId);
 
@@ -178,13 +178,13 @@ export class GameManager {
    */
   public startQuestion(
     sessionId: string,
+    presentationId: string,
     slideId: string,
     durationSeconds: number,
     correctAnswer: string | string[] | null,
     onExpire: () => void
   ): QuestionTimerState | null {
-    const session = this.sessions.get(sessionId);
-    if (!session) return null;
+    const session = this.getOrCreateSession(sessionId, presentationId);
 
     this.clearTimers(sessionId);
 

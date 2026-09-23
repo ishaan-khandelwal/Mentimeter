@@ -87,6 +87,7 @@ export function registerSocketHandlers(io: IOServer): void {
             presentationId: presentation.id,
             status: 'active',
           },
+          orderBy: { startedAt: 'desc' },
         });
 
         if (!session) {
@@ -233,14 +234,29 @@ export function registerSocketHandlers(io: IOServer): void {
       }
 
       const firstSlide = slides[0];
-      const session = await prisma.session.create({
-        data: {
-          presentationId,
-          currentSlideId: firstSlide.id,
-          status: 'active',
-          votingLocked: false,
-        },
+
+      // Reuse existing active session if one is already open, or create new
+      let session = await prisma.session.findFirst({
+        where: { presentationId, status: 'active' },
+        orderBy: { startedAt: 'desc' },
       });
+
+      if (!session) {
+        session = await prisma.session.create({
+          data: {
+            presentationId,
+            currentSlideId: firstSlide.id,
+            status: 'active',
+            votingLocked: false,
+          },
+        });
+      } else {
+        // Ensure any older duplicate sessions are ended
+        await prisma.session.updateMany({
+          where: { presentationId, status: 'active', id: { not: session.id } },
+          data: { status: 'ended', endedAt: new Date() },
+        });
+      }
 
       await prisma.presentation.update({
         where: { id: presentationId },
@@ -251,7 +267,7 @@ export function registerSocketHandlers(io: IOServer): void {
       const slideIds = slides.map((s: any) => s.id);
       registerSession(sessionId, presentationId, slideIds);
 
-      // Update socket state with the new sessionId
+      // Update socket state with the sessionId
       socketSessions.set(socket.id, {
         sessionId,
         presentationId,
@@ -262,14 +278,18 @@ export function registerSocketHandlers(io: IOServer): void {
       await socket.join(`session:${sessionId}`);
       await socket.join(`presenter:${sessionId}`);
 
-      const event: SessionStartedEvent = {
-        sessionId,
-        currentSlideId: firstSlide.id,
-        votingLocked: false,
-      };
-      socket.emit('session_started', event);
+      const currentGameState = gameManager.getSession(sessionId);
+      const lobbyData = gameManager.getLobbyList(sessionId);
 
-      console.log(`[Socket] Session started: ${sessionId}`);
+      socket.emit('session_started', {
+        sessionId,
+        currentSlideId: session.currentSlideId || firstSlide.id,
+        votingLocked: session.votingLocked,
+        gameState: currentGameState?.state || 'LOBBY',
+        lobby: lobbyData,
+      });
+
+      console.log(`[Socket] Session ready (reused or created): ${sessionId}`);
     });
 
     // ── Attendee: Submit Vote ─────────────────────────────────────────────
@@ -348,6 +368,7 @@ export function registerSocketHandlers(io: IOServer): void {
 
         const session = await prisma.session.findFirst({
           where: { presentationId: presentation.id, status: 'active' },
+          orderBy: { startedAt: 'desc' },
         });
         if (!session) {
           socket.emit('error', { code: 'SESSION_NOT_ACTIVE', message: 'Session is not active' });
@@ -425,9 +446,11 @@ export function registerSocketHandlers(io: IOServer): void {
         const slideConfig = (targetSlide.config as any) || {};
         const durationSeconds = Number(slideConfig.durationSeconds) || 20;
         const correctAnswer = slideConfig.correctAnswer ?? null;
+        const presentationId = session.presentationId;
 
         gameManager.startCountdown(
           sessionId,
+          presentationId,
           targetSlide.id,
           durationSeconds,
           correctAnswer,
@@ -452,6 +475,7 @@ export function registerSocketHandlers(io: IOServer): void {
 
             const timerState = gameManager.startQuestion(
               sessionId,
+              presentationId,
               targetSlide.id,
               durationSeconds,
               correctAnswer,
