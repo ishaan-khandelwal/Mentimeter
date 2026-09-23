@@ -1,11 +1,11 @@
 .page {
-  --background: #fafafa;
-  --foreground: #fff;
+  --background: #fbf7f0;
+  --foreground: #fffaf3;
 
-  --text-primary: #000;
+  --text-primary: #3f2940;
   --text-secondary: #666;
 
-  --button-primary-hover: #383838;
+  --button-primary-hover: #6f4a5d;
   --button-secondary-hover: #f2f2f2;
   --button-secondary-border: #ebebeb;
 
@@ -129,15 +129,15 @@ a.secondary {
   }
 
   .page {
-    --background: #000;
-    --foreground: #000;
+    --background: #3f2940;
+    --foreground: #3f2940;
 
-    --text-primary: #ededed;
+    --text-primary: #3f2940;
     --text-secondary: #999;
 
     --button-primary-hover: #ccc;
-    --button-secondary-hover: #1a1a1a;
-    --button-secondary-border: #1a1a1a;
+    --button-secondary-hover: #5c3649;
+    --button-secondary-border: #5c3649;
   }
 }
 

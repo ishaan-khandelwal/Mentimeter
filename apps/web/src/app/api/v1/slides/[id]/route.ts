@@ -14,6 +14,9 @@ const UpdateSlideSchema = z.object({
   options: z.array(z.string().max(200)).optional(),
   order: z.number().int().min(0).optional(),
   config: z.record(z.any()).optional(),
+  hideResults: z.boolean().optional(),
+  timerSeconds: z.number().nullable().optional(),
+  maxVotes: z.number().int().min(1).max(20).optional(),
 });
 
 // PATCH /api/v1/slides/:id
@@ -41,15 +44,19 @@ export async function PATCH(req: Request, { params }: RouteParams) {
     return NextResponse.json({ error: result.error.flatten().fieldErrors }, { status: 400 });
   }
 
+  const updateData: any = {};
+  if (result.data.type !== undefined) updateData.type = result.data.type;
+  if (result.data.question !== undefined) updateData.question = result.data.question;
+  if (result.data.options !== undefined) updateData.options = result.data.options;
+  if (result.data.order !== undefined) updateData.order = result.data.order;
+  if (result.data.config !== undefined) updateData.config = result.data.config;
+  if (result.data.hideResults !== undefined) updateData.hideResults = result.data.hideResults;
+  if (result.data.timerSeconds !== undefined) updateData.timerSeconds = result.data.timerSeconds;
+  if (result.data.maxVotes !== undefined) updateData.maxVotes = result.data.maxVotes;
+
   const updated = await prisma.slide.update({
     where: { id: params.id },
-    data: {
-      type: result.data.type,
-      question: result.data.question,
-      options: result.data.options,
-      order: result.data.order,
-      config: result.data.config,
-    },
+    data: updateData,
   });
 
   return NextResponse.json({

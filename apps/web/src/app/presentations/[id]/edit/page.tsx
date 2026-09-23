@@ -4,7 +4,21 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 
-type SlideType = 'multiple_choice' | 'word_cloud' | 'open_text' | 'rating_scale' | 'ranking' | 'qa';
+type SlideType =
+  | 'multiple_choice'
+  | 'word_cloud'
+  | 'open_text'
+  | 'rating_scale'
+  | 'ranking'
+  | 'qa'
+  | 'scales'
+  | 'hundred_points'
+  | 'number'
+  | 'heading'
+  | 'paragraph'
+  | 'image'
+  | 'video'
+  | 'bullets';
 
 interface SlideData {
   _id: string;
@@ -14,6 +28,9 @@ interface SlideData {
   order: number;
   options?: string[];
   config?: Record<string, any>;
+  hideResults?: boolean;
+  timerSeconds?: number | null;
+  maxVotes?: number;
 }
 
 interface PresentationData {
@@ -21,6 +38,8 @@ interface PresentationData {
   title: string;
   joinCode: string;
   status: string;
+  theme?: any;
+  isAsyncForm?: boolean;
 }
 
 export default function PresentationEditorPage() {
@@ -57,6 +76,10 @@ export default function PresentationEditorPage() {
   const [createDurationSeconds, setCreateDurationSeconds] = useState(20);
   const [createCreating, setCreateCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+
+  // Theme Modal and Editor Mode states
+  const [showThemeModal, setShowThemeModal] = useState(false);
+  const [editorMode, setEditorMode] = useState<'edit' | 'preview'>('edit');
 
   const openCreateQuestionModal = (type: SlideType = 'multiple_choice') => {
     setCreateType(type);
@@ -229,6 +252,9 @@ export default function PresentationEditorPage() {
           question: slide.question,
           options: slide.options || [],
           config: slide.config || {},
+          hideResults: slide.hideResults,
+          timerSeconds: slide.timerSeconds,
+          maxVotes: slide.maxVotes,
         }),
       });
       if (res.ok) {
@@ -242,6 +268,57 @@ export default function PresentationEditorPage() {
       setSaveStatus('idle');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDuplicateSlide = async (slideId: string) => {
+    try {
+      const res = await fetch(`/api/v1/slides/${slideId}/duplicate`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setSlides((prev) => {
+          const next = [...prev];
+          const idx = next.findIndex((s) => s._id === slideId);
+          if (idx >= 0) {
+            next.splice(idx + 1, 0, data.slide);
+          } else {
+            next.push(data.slide);
+          }
+          return next;
+        });
+      }
+    } catch (err) {
+      console.error('Error duplicating slide:', err);
+    }
+  };
+
+  const handleUpdateTheme = async (themeObj: any) => {
+    if (!presentation) return;
+    const merged = { ...(presentation.theme || {}), ...themeObj };
+    setPresentation({ ...presentation, theme: merged });
+    try {
+      await fetch(`/api/v1/presentations/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ theme: merged }),
+      });
+    } catch (err) {
+      console.error('Error updating theme:', err);
+    }
+  };
+
+  const handleToggleFormMode = async () => {
+    if (!presentation) return;
+    const newVal = !presentation.isAsyncForm;
+    setPresentation({ ...presentation, isAsyncForm: newVal });
+    try {
+      await fetch(`/api/v1/presentations/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isAsyncForm: newVal }),
+      });
+    } catch (err) {
+      console.error('Error toggling form mode:', err);
     }
   };
 
@@ -312,6 +389,46 @@ export default function PresentationEditorPage() {
           question: 'Ask any questions for our Q&A session',
           options: [],
           config: { allowAnonymous: true, moderated: false },
+        },
+        scales: {
+          question: 'How strongly do you agree with these statements?',
+          options: ['Our goals are clear and achievable', 'Team collaboration is seamless', 'We have the right tools'],
+          config: { lowLabel: 'Strongly Disagree', highLabel: 'Strongly Agree' },
+        },
+        hundred_points: {
+          question: 'Distribute 100 points across our priorities:',
+          options: ['Feature A', 'Feature B', 'Feature C', 'Technical Debt'],
+          config: {},
+        },
+        number: {
+          question: 'Guess the exact number or estimate:',
+          options: [],
+          config: { min: 0, max: 1000, step: 1 },
+        },
+        heading: {
+          question: 'Presentation Title or Section',
+          options: [],
+          config: { subtitle: 'Add a subtitle or introduction for your audience' },
+        },
+        paragraph: {
+          question: 'Key Summary & Insights',
+          options: [],
+          config: { body: 'Write any important notes, takeaways, or instructions here.' },
+        },
+        image: {
+          question: 'Feature Showcase Image',
+          options: [],
+          config: { imageUrl: 'https://images.unsplash.com/photo-1551836022-d5d88e9218df?auto=format&fit=crop&w=1200&q=80', caption: 'Overview diagram' },
+        },
+        video: {
+          question: 'Video Showcase',
+          options: [],
+          config: { videoUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
+        },
+        bullets: {
+          question: 'Key Objectives & Takeaways',
+          options: ['First primary takeaway', 'Second important milestone', 'Action steps going forward'],
+          config: {},
         },
       };
 
@@ -463,6 +580,14 @@ export default function PresentationEditorPage() {
     rating_scale: '⭐',
     ranking: '🏆',
     qa: '❓',
+    scales: '⚖️',
+    hundred_points: '💯',
+    number: '🔢',
+    heading: '🏷️',
+    paragraph: '📝',
+    image: '🖼️',
+    video: '🎬',
+    bullets: '📋',
   };
 
   return (
@@ -475,7 +600,7 @@ export default function PresentationEditorPage() {
           justifyContent: 'space-between',
           padding: '12px 24px',
           borderBottom: '1px solid var(--color-border)',
-          background: 'rgba(19, 19, 31, 0.95)',
+          background: 'rgba(241, 231, 220, 0.95)',
           gap: '16px',
           flexWrap: 'wrap',
         }}
@@ -497,7 +622,7 @@ export default function PresentationEditorPage() {
               fontWeight: 700,
               padding: '4px 8px',
               outline: 'none',
-              maxWidth: '360px',
+              maxWidth: '300px',
             }}
             onFocus={(e) => (e.target.style.borderColor = 'var(--color-border)')}
             onBlur={(e) => (e.target.style.borderColor = 'transparent')}
@@ -505,12 +630,47 @@ export default function PresentationEditorPage() {
           <span className="badge badge--primary">Code: {presentation?.joinCode}</span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => setShowThemeModal(true)}
+            className="btn btn--ghost btn--sm"
+            title="Customize presentation colors, fonts, and themes"
+          >
+            🎨 Theme
+          </button>
+
+          <button
+            type="button"
+            onClick={handleToggleFormMode}
+            className={`btn btn--sm ${presentation?.isAsyncForm ? 'btn--primary' : 'btn--ghost'}`}
+            title="Toggle Async Form Mode (participants can answer without live session)"
+          >
+            📋 {presentation?.isAsyncForm ? 'Form: Active' : 'Form Mode'}
+          </button>
+
+          <Link
+            href={`/presentations/${id}/results`}
+            className="btn btn--ghost btn--sm"
+            title="View Analytics & Responses"
+          >
+            📊 Results
+          </Link>
+
+          <button
+            type="button"
+            onClick={() => setEditorMode((prev) => (prev === 'edit' ? 'preview' : 'edit'))}
+            className={`btn btn--sm ${editorMode === 'preview' ? 'btn--primary' : 'btn--secondary'}`}
+            title="Toggle live presentation canvas preview"
+          >
+            {editorMode === 'preview' ? '✏ Edit Mode' : '👁 Preview'}
+          </button>
+
           <button
             onClick={() => setShowAiModal(true)}
             className="btn btn--secondary btn--sm"
           >
-            ✨ AI Slide Generator
+            ✨ AI Generator
           </button>
 
           {activeSlide && (
@@ -518,7 +678,7 @@ export default function PresentationEditorPage() {
               onClick={() => saveSlide(activeSlide)}
               disabled={saving}
               className={`btn btn--sm ${saveStatus === 'saved' ? 'btn--ghost' : 'btn--secondary'}`}
-              style={{ minWidth: '110px' }}
+              style={{ minWidth: '100px' }}
             >
               {saveStatus === 'saving'
                 ? '💾 Saving...'
@@ -596,9 +756,9 @@ export default function PresentationEditorPage() {
                   justifyContent: 'space-between',
                   padding: '10px 12px',
                   borderRadius: '8px',
-                  background: isActive ? 'rgba(124, 92, 252, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                  background: isActive ? 'rgba(217, 87, 69, 0.15)' : 'rgba(92, 54, 73, 0.05)',
                   border: isActive
-                    ? '1px solid rgba(124, 92, 252, 0.4)'
+                    ? '1px solid rgba(217, 87, 69, 0.4)'
                     : '1px solid transparent',
                   cursor: 'pointer',
                   transition: 'all 0.15s ease',
@@ -628,7 +788,7 @@ export default function PresentationEditorPage() {
                         fontSize: '0.62rem',
                         fontWeight: 700,
                         background: 'rgba(34, 197, 94, 0.15)',
-                        color: '#4ade80',
+                        color: '#2f8f6b',
                         border: '1px solid rgba(34, 197, 94, 0.3)',
                         padding: '1px 5px',
                         borderRadius: '4px',
@@ -681,6 +841,23 @@ export default function PresentationEditorPage() {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
+                      handleDuplicateSlide(s._id);
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--color-text-muted)',
+                      fontSize: '0.8rem',
+                      cursor: 'pointer',
+                      padding: '2px',
+                    }}
+                    title="Duplicate slide"
+                  >
+                    ⎘
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
                       handleDeleteSlide(s._id, index);
                     }}
                     style={{
@@ -707,18 +884,27 @@ export default function PresentationEditorPage() {
             <div style={{ maxWidth: '780px', margin: '0 auto' }}>
               {/* Slide Type Switcher */}
               <div style={{ marginBottom: '24px' }}>
-                <label className="form-label" style={{ marginBottom: '8px', display: 'block' }}>
-                  Question Type
-                </label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <label className="form-label" style={{ margin: 0 }}>Slide Type</label>
+                  <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>Interactive &amp; Content Slides</span>
+                </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                   {(
                     [
                       ['multiple_choice', '📊 Multiple Choice'],
                       ['word_cloud', '☁️ Word Cloud'],
-                      ['open_text', '💬 Open Text'],
-                      ['rating_scale', '⭐ Rating Scale'],
+                      ['scales', '⚖️ Scales (Likert)'],
+                      ['hundred_points', '💯 100 Points'],
+                      ['number', '🔢 Number'],
+                      ['rating_scale', '⭐ Rating'],
                       ['ranking', '🏆 Ranking'],
+                      ['open_text', '💬 Open Text'],
                       ['qa', '❓ Live Q&A'],
+                      ['heading', '🏷️ Heading'],
+                      ['paragraph', '📝 Paragraph'],
+                      ['image', '🖼️ Image'],
+                      ['video', '🎬 Video'],
+                      ['bullets', '📋 Bullets'],
                     ] as [SlideType, string][]
                   ).map(([t, label]) => (
                     <button
@@ -736,16 +922,68 @@ export default function PresentationEditorPage() {
               </div>
 
               {/* Question Input */}
-              <div className="form-group" style={{ marginBottom: '24px' }}>
-                <label className="form-label">Question / Prompt</label>
+              <div className="form-group" style={{ marginBottom: '20px' }}>
+                <label className="form-label">
+                  {['heading', 'paragraph', 'image', 'video', 'bullets'].includes(activeSlide.type) ? 'Slide Heading / Title' : 'Question / Prompt'}
+                </label>
                 <input
                   type="text"
                   value={activeSlide.question}
                   onChange={(e) => updateActiveSlide({ question: e.target.value })}
-                  placeholder="What would you like to ask your audience?"
+                  placeholder={['heading', 'paragraph', 'image', 'video', 'bullets'].includes(activeSlide.type) ? 'Enter slide title...' : 'What would you like to ask your audience?'}
                   className="form-input"
                   style={{ fontSize: '1.1rem', fontWeight: 600, padding: '14px 18px' }}
                 />
+              </div>
+
+              {/* Per-Slide Config Card (Mentimeter style) */}
+              <div className="card" style={{ padding: '16px 20px', marginBottom: '24px', display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'center', background: 'rgba(92, 54, 73, 0.04)' }}>
+                {/* Hide Results Toggle */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.85rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={activeSlide.hideResults || false}
+                    onChange={(e) => updateActiveSlide({ hideResults: e.target.checked })}
+                  />
+                  <span>🙈 Hide results until revealed</span>
+                </label>
+
+                {/* Per-Slide Timer */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}>
+                  <span style={{ color: 'var(--color-text-secondary)' }}>⏱️ Timer:</span>
+                  <select
+                    className="form-select"
+                    style={{ padding: '4px 8px', fontSize: '0.82rem', width: 'auto' }}
+                    value={activeSlide.timerSeconds ?? ''}
+                    onChange={(e) => updateActiveSlide({ timerSeconds: e.target.value ? Number(e.target.value) : null })}
+                  >
+                    <option value="">No timer</option>
+                    <option value="15">15 seconds</option>
+                    <option value="20">20 seconds</option>
+                    <option value="30">30 seconds</option>
+                    <option value="60">60 seconds</option>
+                    <option value="90">90 seconds</option>
+                    <option value="120">2 minutes</option>
+                  </select>
+                </div>
+
+                {/* Max Votes for Multiple Choice */}
+                {activeSlide.type === 'multiple_choice' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}>
+                    <span style={{ color: 'var(--color-text-secondary)' }}>Max choices:</span>
+                    <select
+                      className="form-select"
+                      style={{ padding: '4px 8px', fontSize: '0.82rem', width: 'auto' }}
+                      value={activeSlide.maxVotes || 1}
+                      onChange={(e) => updateActiveSlide({ maxVotes: Number(e.target.value) })}
+                    >
+                      <option value="1">1 choice (Single vote)</option>
+                      <option value="2">Up to 2 choices</option>
+                      <option value="3">Up to 3 choices</option>
+                      <option value="5">Up to 5 choices</option>
+                    </select>
+                  </div>
+                )}
               </div>
 
               {/* Multiple Choice Options & Correct Answer */}
@@ -798,7 +1036,7 @@ export default function PresentationEditorPage() {
                         borderRadius: '12px',
                         background: activeSlide.config?.correctAnswer
                           ? 'rgba(34, 197, 94, 0.08)'
-                          : 'rgba(255, 255, 255, 0.03)',
+                          : 'rgba(92, 54, 73, 0.05)',
                         border: activeSlide.config?.correctAnswer
                           ? '1px solid rgba(34, 197, 94, 0.35)'
                           : '1px solid var(--color-border)',
@@ -815,7 +1053,7 @@ export default function PresentationEditorPage() {
                             <span style={{ fontWeight: 700, fontSize: '0.98rem' }}>Quiz Correct Answer</span>
                             <div style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
                               {activeSlide.config?.correctAnswer ? (
-                                <span style={{ color: '#4ade80', fontWeight: 600 }}>
+                                <span style={{ color: '#2f8f6b', fontWeight: 600 }}>
                                   ✓ Correct answer saved:{' '}
                                   {Array.isArray(activeSlide.config.correctAnswer)
                                     ? activeSlide.config.correctAnswer.join(', ')
@@ -875,8 +1113,8 @@ export default function PresentationEditorPage() {
                               alignItems: 'center',
                               padding: '8px 12px',
                               borderRadius: '10px',
-                              background: isCorrect ? 'rgba(34, 197, 94, 0.1)' : 'rgba(255, 255, 255, 0.02)',
-                              border: isCorrect ? '1.5px solid #22c55e' : '1px solid var(--color-border)',
+                              background: isCorrect ? 'rgba(34, 197, 94, 0.1)' : 'rgba(92, 54, 73, 0.04)',
+                              border: isCorrect ? '1.5px solid #3f9a73' : '1px solid var(--color-border)',
                               transition: 'all 0.2s ease',
                             }}
                           >
@@ -885,8 +1123,8 @@ export default function PresentationEditorPage() {
                                 width: '28px',
                                 height: '28px',
                                 borderRadius: '50%',
-                                background: isCorrect ? '#22c55e' : 'rgba(255, 255, 255, 0.06)',
-                                color: isCorrect ? '#000000' : 'var(--color-text-secondary)',
+                                background: isCorrect ? '#3f9a73' : 'rgba(92, 54, 73, 0.08)',
+                                color: isCorrect ? '#3f2940' : 'var(--color-text-secondary)',
                                 fontWeight: 800,
                                 display: 'flex',
                                 alignItems: 'center',
@@ -938,9 +1176,9 @@ export default function PresentationEditorPage() {
                                 whiteSpace: 'nowrap',
                                 fontSize: '0.8rem',
                                 fontWeight: isCorrect ? 700 : 500,
-                                background: isCorrect ? '#16a34a' : 'rgba(255, 255, 255, 0.05)',
-                                borderColor: isCorrect ? '#22c55e' : 'var(--color-border)',
-                                color: isCorrect ? '#ffffff' : 'var(--color-text-secondary)',
+                                background: isCorrect ? '#2f8f6b' : 'rgba(92, 54, 73, 0.07)',
+                                borderColor: isCorrect ? '#3f9a73' : 'var(--color-border)',
+                                color: isCorrect ? '#fffaf3' : 'var(--color-text-secondary)',
                                 display: 'flex',
                                 alignItems: 'center',
                                 gap: '6px',
@@ -1243,10 +1481,440 @@ export default function PresentationEditorPage() {
                   </div>
                 </div>
               )}
+
+              {/* Scales / Likert Statements Settings */}
+              {activeSlide.type === 'scales' && (
+                <div className="card" style={{ padding: '24px', marginBottom: '24px' }}>
+                  <label className="form-label" style={{ marginBottom: '12px', display: 'block' }}>
+                    Statements to Rate (Likert Opinion Scale)
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                    <div className="form-group">
+                      <label className="form-label" style={{ fontSize: '0.8rem' }}>Low End Label</label>
+                      <input
+                        type="text"
+                        value={activeSlide.config?.lowLabel || 'Strongly Disagree'}
+                        onChange={(e) => updateActiveSlide({ config: { ...activeSlide.config, lowLabel: e.target.value } })}
+                        className="form-input"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label" style={{ fontSize: '0.8rem' }}>High End Label</label>
+                      <input
+                        type="text"
+                        value={activeSlide.config?.highLabel || 'Strongly Agree'}
+                        onChange={(e) => updateActiveSlide({ config: { ...activeSlide.config, highLabel: e.target.value } })}
+                        className="form-input"
+                      />
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {(activeSlide.options || []).map((stmt, i) => (
+                      <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', width: '20px' }}>#{i + 1}</span>
+                        <input
+                          type="text"
+                          value={stmt}
+                          onChange={(e) => {
+                            const copy = [...(activeSlide.options || [])];
+                            copy[i] = e.target.value;
+                            updateActiveSlide({ options: copy });
+                          }}
+                          placeholder={`Statement ${i + 1}`}
+                          className="form-input"
+                          style={{ flex: 1 }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const copy = (activeSlide.options || []).filter((_, idx) => idx !== i);
+                            updateActiveSlide({ options: copy });
+                          }}
+                          disabled={(activeSlide.options || []).length <= 1}
+                          className="btn btn--danger btn--sm"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const copy = [...(activeSlide.options || []), `New statement ${(activeSlide.options || []).length + 1}`];
+                      updateActiveSlide({ options: copy });
+                    }}
+                    className="btn btn--secondary btn--sm"
+                    style={{ marginTop: '16px' }}
+                  >
+                    ＋ Add Statement
+                  </button>
+                </div>
+              )}
+
+              {/* 100 Points Budget Allocation Settings */}
+              {activeSlide.type === 'hundred_points' && (
+                <div className="card" style={{ padding: '24px', marginBottom: '24px' }}>
+                  <label className="form-label" style={{ marginBottom: '8px', display: 'block' }}>
+                    Options to Distribute 100 Points Across
+                  </label>
+                  <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.85rem', marginBottom: '16px' }}>
+                    Participants receive 100 points total and use sliders to allocate points to their preferred options.
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {(activeSlide.options || []).map((opt, i) => (
+                      <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', width: '20px' }}>#{i + 1}</span>
+                        <input
+                          type="text"
+                          value={opt}
+                          onChange={(e) => {
+                            const copy = [...(activeSlide.options || [])];
+                            copy[i] = e.target.value;
+                            updateActiveSlide({ options: copy });
+                          }}
+                          placeholder={`Option ${i + 1}`}
+                          className="form-input"
+                          style={{ flex: 1 }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const copy = (activeSlide.options || []).filter((_, idx) => idx !== i);
+                            updateActiveSlide({ options: copy });
+                          }}
+                          disabled={(activeSlide.options || []).length <= 2}
+                          className="btn btn--danger btn--sm"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const copy = [...(activeSlide.options || []), `Option ${(activeSlide.options || []).length + 1}`];
+                      updateActiveSlide({ options: copy });
+                    }}
+                    className="btn btn--secondary btn--sm"
+                    style={{ marginTop: '16px' }}
+                  >
+                    ＋ Add Option
+                  </button>
+                </div>
+              )}
+
+              {/* Number Slide Settings */}
+              {activeSlide.type === 'number' && (
+                <div className="card" style={{ padding: '24px', marginBottom: '24px' }}>
+                  <label className="form-label" style={{ marginBottom: '12px', display: 'block' }}>
+                    Numeric Input &amp; Guessing Settings
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '16px', marginBottom: '16px' }}>
+                    <div className="form-group">
+                      <label className="form-label">Minimum Value</label>
+                      <input
+                        type="number"
+                        value={activeSlide.config?.min ?? 0}
+                        onChange={(e) => updateActiveSlide({ config: { ...activeSlide.config, min: Number(e.target.value) } })}
+                        className="form-input"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Maximum Value</label>
+                      <input
+                        type="number"
+                        value={activeSlide.config?.max ?? 1000}
+                        onChange={(e) => updateActiveSlide({ config: { ...activeSlide.config, max: Number(e.target.value) } })}
+                        className="form-input"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Step</label>
+                      <input
+                        type="number"
+                        value={activeSlide.config?.step ?? 1}
+                        onChange={(e) => updateActiveSlide({ config: { ...activeSlide.config, step: Number(e.target.value) } })}
+                        className="form-input"
+                      />
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">🎯 Correct Target Number (Optional Quiz grading)</label>
+                    <input
+                      type="number"
+                      value={activeSlide.config?.correctNumber ?? ''}
+                      onChange={(e) =>
+                        updateActiveSlide({
+                          config: {
+                            ...activeSlide.config,
+                            correctNumber: e.target.value !== '' ? Number(e.target.value) : undefined,
+                          },
+                        })
+                      }
+                      placeholder="e.g. 42 (Leave empty if no exact correct answer)"
+                      className="form-input"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Heading Slide Settings */}
+              {activeSlide.type === 'heading' && (
+                <div className="card" style={{ padding: '24px', marginBottom: '24px' }}>
+                  <label className="form-label" style={{ marginBottom: '8px', display: 'block' }}>
+                    Heading &amp; Section Slide
+                  </label>
+                  <div className="form-group">
+                    <label className="form-label">Subtitle or Supporting Description</label>
+                    <input
+                      type="text"
+                      value={activeSlide.config?.subtitle || ''}
+                      onChange={(e) => updateActiveSlide({ config: { ...activeSlide.config, subtitle: e.target.value } })}
+                      placeholder="e.g. A deep dive into interactive presentations"
+                      className="form-input"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Paragraph / Rich Text Settings */}
+              {activeSlide.type === 'paragraph' && (
+                <div className="card" style={{ padding: '24px', marginBottom: '24px' }}>
+                  <label className="form-label" style={{ marginBottom: '8px', display: 'block' }}>
+                    Paragraph Content
+                  </label>
+                  <textarea
+                    rows={6}
+                    value={activeSlide.config?.body || ''}
+                    onChange={(e) => updateActiveSlide({ config: { ...activeSlide.config, body: e.target.value } })}
+                    placeholder="Write key takeaways, context, or meeting notes here..."
+                    className="form-textarea"
+                  />
+                </div>
+              )}
+
+              {/* Image Slide Settings */}
+              {activeSlide.type === 'image' && (
+                <div className="card" style={{ padding: '24px', marginBottom: '24px' }}>
+                  <label className="form-label" style={{ marginBottom: '12px', display: 'block' }}>
+                    Image Presentation Slide
+                  </label>
+                  <div className="form-group" style={{ marginBottom: '16px' }}>
+                    <label className="form-label">Image URL</label>
+                    <input
+                      type="url"
+                      value={activeSlide.config?.imageUrl || ''}
+                      onChange={(e) => updateActiveSlide({ config: { ...activeSlide.config, imageUrl: e.target.value } })}
+                      placeholder="https://example.com/slide-image.jpg"
+                      className="form-input"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Caption / Footnote</label>
+                    <input
+                      type="text"
+                      value={activeSlide.config?.caption || ''}
+                      onChange={(e) => updateActiveSlide({ config: { ...activeSlide.config, caption: e.target.value } })}
+                      placeholder="e.g. Architecture Overview Diagram"
+                      className="form-input"
+                    />
+                  </div>
+                  {activeSlide.config?.imageUrl && (
+                    <div style={{ marginTop: '16px', textAlign: 'center' }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={activeSlide.config.imageUrl}
+                        alt="Preview"
+                        style={{ maxWidth: '100%', maxHeight: '240px', borderRadius: '10px', objectFit: 'contain' }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Video Slide Settings */}
+              {activeSlide.type === 'video' && (
+                <div className="card" style={{ padding: '24px', marginBottom: '24px' }}>
+                  <label className="form-label" style={{ marginBottom: '8px', display: 'block' }}>
+                    Video Embed Slide
+                  </label>
+                  <div className="form-group">
+                    <label className="form-label">YouTube / Video URL</label>
+                    <input
+                      type="url"
+                      value={activeSlide.config?.videoUrl || ''}
+                      onChange={(e) => updateActiveSlide({ config: { ...activeSlide.config, videoUrl: e.target.value } })}
+                      placeholder="https://www.youtube.com/watch?v=..."
+                      className="form-input"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Bullets Slide Settings */}
+              {activeSlide.type === 'bullets' && (
+                <div className="card" style={{ padding: '24px', marginBottom: '24px' }}>
+                  <label className="form-label" style={{ marginBottom: '12px', display: 'block' }}>
+                    Bullet Points List
+                  </label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {(activeSlide.options || []).map((bullet, i) => (
+                      <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <span style={{ color: '#b65f78' }}>✦</span>
+                        <input
+                          type="text"
+                          value={bullet}
+                          onChange={(e) => {
+                            const copy = [...(activeSlide.options || [])];
+                            copy[i] = e.target.value;
+                            updateActiveSlide({ options: copy });
+                          }}
+                          placeholder={`Bullet item ${i + 1}`}
+                          className="form-input"
+                          style={{ flex: 1 }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const copy = (activeSlide.options || []).filter((_, idx) => idx !== i);
+                            updateActiveSlide({ options: copy });
+                          }}
+                          disabled={(activeSlide.options || []).length <= 1}
+                          className="btn btn--danger btn--sm"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const copy = [...(activeSlide.options || []), `New point ${(activeSlide.options || []).length + 1}`];
+                      updateActiveSlide({ options: copy });
+                    }}
+                    className="btn btn--secondary btn--sm"
+                    style={{ marginTop: '16px' }}
+                  >
+                    ＋ Add Bullet
+                  </button>
+                </div>
+              )}
+
+              {/* Live Canvas Preview Block (when in Preview mode or toggle) */}
+              {editorMode === 'preview' && (
+                <div
+                  className="card"
+                  style={{
+                    padding: '40px 32px',
+                    marginTop: '32px',
+                    borderRadius: '16px',
+                    background:
+                      presentation?.theme?.colorScheme === 'saffron'
+                        ? 'radial-gradient(ellipse at top, #6b3448 0%, #5b3047 60%, #4a2b40 100%)'
+                        : presentation?.theme?.colorScheme === 'forest'
+                        ? 'radial-gradient(ellipse at top, #2d6d56 0%, #285f4c 60%, #244c40 100%)'
+                        : presentation?.theme?.colorScheme === 'sunset'
+                        ? 'radial-gradient(ellipse at top, #8f3449 0%, #6b2f40 60%, #4d2935 100%)'
+                        : presentation?.theme?.colorScheme === 'plum'
+                        ? 'radial-gradient(ellipse at top, #6b3448 0%, #efe5dc 60%, #3f2940 100%)'
+                        : presentation?.theme?.colorScheme === 'rose'
+                        ? 'radial-gradient(ellipse at top, #93405d 0%, #5c3649 60%, #4a2b3b 100%)'
+                        : presentation?.theme?.colorScheme === 'amber'
+                        ? 'radial-gradient(ellipse at top, #80552b 0%, #5c473a 60%, #45372f 100%)'
+                        : presentation?.theme?.colorScheme === 'clay'
+                        ? 'radial-gradient(ellipse at top, #f1e7dc 0%, #efe5dc 60%, #e8ddd3 100%)'
+                        : 'radial-gradient(ellipse at top, #6b3448 0%, #efe5dc 60%, #f7efe7 100%)',
+                    fontFamily:
+                      presentation?.theme?.fontStyle === 'classic'
+                        ? 'Georgia, serif'
+                        : presentation?.theme?.fontStyle === 'playful'
+                        ? 'Comic Sans MS, cursive, sans-serif'
+                        : presentation?.theme?.fontStyle === 'minimal'
+                        ? 'monospace, sans-serif'
+                        : 'inherit',
+                    border: '2px solid rgba(217,87,69,0.4)',
+                    boxShadow: '0 20px 50px rgba(63,41,64,0.5)',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                    <span className="badge badge--live" style={{ fontSize: '0.75rem' }}>
+                      ● Live Canvas Preview
+                    </span>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                      Slide {activeSlideIndex + 1} of {slides.length}
+                    </span>
+                  </div>
+                  <h2 style={{ fontSize: '1.8rem', fontWeight: 800, textAlign: 'center', marginBottom: '28px', lineHeight: 1.3 }}>
+                    {activeSlide.question}
+                  </h2>
+
+                  {/* Multiple Choice Preview */}
+                  {activeSlide.type === 'multiple_choice' && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px' }}>
+                      {(activeSlide.options || []).map((opt, i) => (
+                        <div
+                          key={i}
+                          style={{
+                            padding: '16px 20px',
+                            borderRadius: '12px',
+                            background: 'rgba(92, 54, 73, 0.06)',
+                            border: '1px solid rgba(92, 54, 73, 0.12)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '12px',
+                            fontWeight: 600,
+                          }}
+                        >
+                          <span style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#d95745', color: '#fffaf3', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 800 }}>
+                            {String.fromCharCode(65 + i)}
+                          </span>
+                          <span>{opt}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Word Cloud Preview */}
+                  {activeSlide.type === 'word_cloud' && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px', justifyContent: 'center', padding: '30px 0' }}>
+                      {['Inspiration', 'Collaboration', 'Speed', 'Quality', 'Impact'].map((w, idx) => (
+                        <span key={idx} style={{ fontSize: `${1.2 + idx * 0.3}rem`, fontWeight: 800, color: '#b65f78' }}>
+                          {w}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Scales Preview */}
+                  {activeSlide.type === 'scales' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      {(activeSlide.options || []).map((s, i) => (
+                        <div key={i} style={{ background: 'rgba(92, 54, 73, 0.05)', padding: '16px', borderRadius: '10px' }}>
+                          <div style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: '8px' }}>{s}</div>
+                          <div style={{ height: '8px', background: 'rgba(92, 54, 73, 0.10)', borderRadius: '4px', overflow: 'hidden' }}>
+                            <div style={{ width: '70%', height: '100%', background: 'linear-gradient(90deg, #2d6d56, #2f8f6b)' }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Number Preview */}
+                  {activeSlide.type === 'number' && (
+                    <div style={{ textAlign: 'center', padding: '30px 0' }}>
+                      <div style={{ fontSize: '4rem', fontWeight: 900, color: '#d95745' }}>42.5</div>
+                      <p style={{ color: 'var(--color-text-muted)' }}>Audience Average Estimate</p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
             <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--color-text-muted)' }}>
-              Select a slide or click ＋ Add to create one.
+              Select a slide or click ＋ Add Question to create one.
             </div>
           )}
         </div>
@@ -1258,7 +1926,7 @@ export default function PresentationEditorPage() {
           style={{
             position: 'fixed',
             inset: 0,
-            background: 'rgba(0,0,0,0.75)',
+            background: 'rgba(63,41,64,0.75)',
             backdropFilter: 'blur(8px)',
             display: 'flex',
             alignItems: 'center',
@@ -1342,7 +2010,7 @@ export default function PresentationEditorPage() {
           style={{
             position: 'fixed',
             inset: 0,
-            background: 'rgba(0,0,0,0.8)',
+            background: 'rgba(63,41,64,0.8)',
             backdropFilter: 'blur(8px)',
             display: 'flex',
             alignItems: 'center',
@@ -1361,8 +2029,8 @@ export default function PresentationEditorPage() {
               overflowY: 'auto',
               padding: '32px',
               borderRadius: '16px',
-              border: '1px solid rgba(255, 255, 255, 0.15)',
-              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.6)',
+              border: '1px solid rgba(92, 54, 73, 0.18)',
+              boxShadow: '0 20px 60px rgba(63, 41, 64, 0.6)',
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -1490,8 +2158,8 @@ export default function PresentationEditorPage() {
                           gap: '8px',
                           padding: '6px 10px',
                           borderRadius: '8px',
-                          background: isCorrect ? 'rgba(34, 197, 94, 0.12)' : 'rgba(255, 255, 255, 0.03)',
-                          border: isCorrect ? '1.5px solid #22c55e' : '1px solid var(--color-border)',
+                          background: isCorrect ? 'rgba(34, 197, 94, 0.12)' : 'rgba(92, 54, 73, 0.05)',
+                          border: isCorrect ? '1.5px solid #3f9a73' : '1px solid var(--color-border)',
                           transition: 'all 0.15s ease',
                         }}
                       >
@@ -1500,8 +2168,8 @@ export default function PresentationEditorPage() {
                             width: '26px',
                             height: '26px',
                             borderRadius: '50%',
-                            background: isCorrect ? '#22c55e' : 'rgba(255, 255, 255, 0.08)',
-                            color: isCorrect ? '#000' : 'var(--color-text-muted)',
+                            background: isCorrect ? '#3f9a73' : 'rgba(92, 54, 73, 0.10)',
+                            color: isCorrect ? '#3f2940' : 'var(--color-text-muted)',
                             fontWeight: 700,
                             display: 'flex',
                             alignItems: 'center',
@@ -1556,9 +2224,9 @@ export default function PresentationEditorPage() {
                           style={{
                             whiteSpace: 'nowrap',
                             fontSize: '0.78rem',
-                            background: isCorrect ? '#16a34a' : 'transparent',
-                            borderColor: isCorrect ? '#22c55e' : undefined,
-                            color: isCorrect ? '#fff' : 'var(--color-text-secondary)',
+                            background: isCorrect ? '#2f8f6b' : 'transparent',
+                            borderColor: isCorrect ? '#3f9a73' : undefined,
+                            color: isCorrect ? '#fffaf3' : 'var(--color-text-secondary)',
                             fontWeight: isCorrect ? 700 : 500,
                             padding: '6px 12px',
                             minWidth: '120px',
@@ -1621,7 +2289,7 @@ export default function PresentationEditorPage() {
                 </div>
 
                 {createCorrectAnswer && (
-                  <div style={{ marginTop: '12px', padding: '10px 14px', borderRadius: '8px', background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.3)', fontSize: '0.85rem', color: '#4ade80' }}>
+                  <div style={{ marginTop: '12px', padding: '10px 14px', borderRadius: '8px', background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.3)', fontSize: '0.85rem', color: '#2f8f6b' }}>
                     🎯 <strong>Designated Correct Answer:</strong>{' '}
                     {Array.isArray(createCorrectAnswer) ? createCorrectAnswer.join(', ') : createCorrectAnswer}
                   </div>
@@ -1664,6 +2332,165 @@ export default function PresentationEditorPage() {
                 style={{ minWidth: '140px' }}
               >
                 {createCreating ? 'Creating Question...' : '✓ Create Question'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Theme Selector Modal */}
+      {showThemeModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(63,41,64,0.8)',
+            backdropFilter: 'blur(8px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '16px',
+          }}
+          onClick={() => setShowThemeModal(false)}
+        >
+          <div
+            className="card"
+            style={{ width: '100%', maxWidth: '640px', padding: '32px', maxHeight: '90vh', overflowY: 'auto' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '1.5rem' }}>🎨</span>
+                <h2 style={{ fontSize: '1.35rem', fontWeight: 800 }}>Presentation Theme</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowThemeModal(false)}
+                className="btn btn--ghost btn--sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', marginBottom: '24px' }}>
+              Customize your presentation color palette, typography, and slide backdrop styling across presenter and audience screens.
+            </p>
+
+            {/* Color Palettes */}
+            <div style={{ marginBottom: '24px' }}>
+              <label className="form-label" style={{ marginBottom: '12px', display: 'block' }}>
+                Color Palette
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '12px' }}>
+                {[
+                  { id: 'default', name: 'Default Warm', bg: '#efe5dc', primary: '#d95745', text: '#fffaf3' },
+                  { id: 'saffron', name: 'Saffron Bloom', bg: '#5b3047', primary: '#d1912c', text: '#fffaf3' },
+                  { id: 'forest', name: 'Emerald Forest', bg: '#285f4c', primary: '#2f8f6b', text: '#effaf3' },
+                  { id: 'sunset', name: 'Sunset Glow', bg: '#6b2f40', primary: '#f43f5e', text: '#fff4f0' },
+                  { id: 'plum', name: 'Plum Glow', bg: '#efe5dc', primary: '#9c4f73', text: '#fbf7f0' },
+                  { id: 'rose', name: 'Rose Gold', bg: '#5c3649', primary: '#fb7185', text: '#fff4f0' },
+                  { id: 'amber', name: 'Warm Amber', bg: '#5c473a', primary: '#f59e0b', text: '#fef3c7' },
+                  { id: 'clay', name: 'Modern Clay', bg: '#efe5dc', primary: '#806c76', text: '#3f2940' },
+                ].map((th) => {
+                  const isSelected = (presentation?.theme?.colorScheme || 'default') === th.id;
+                  return (
+                    <button
+                      key={th.id}
+                      type="button"
+                      onClick={() => handleUpdateTheme({ colorScheme: th.id })}
+                      style={{
+                        background: th.bg,
+                        border: isSelected ? `2px solid ${th.primary}` : '1px solid var(--color-border)',
+                        boxShadow: isSelected ? `0 0 12px ${th.primary}66` : 'none',
+                        borderRadius: '10px',
+                        padding: '12px',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px',
+                        transition: 'all 0.2s',
+                      }}
+                    >
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <span style={{ width: '16px', height: '16px', borderRadius: '50%', background: th.primary }} />
+                        <span style={{ width: '16px', height: '16px', borderRadius: '50%', background: th.text }} />
+                      </div>
+                      <span style={{ fontSize: '0.82rem', fontWeight: isSelected ? 700 : 500, color: th.text }}>
+                        {th.name}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Typography */}
+            <div style={{ marginBottom: '24px' }}>
+              <label className="form-label" style={{ marginBottom: '12px', display: 'block' }}>
+                Typography Style
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
+                {[
+                  { id: 'modern', name: 'Modern', sub: 'Inter / Sans' },
+                  { id: 'classic', name: 'Classic', sub: 'Georgia / Serif' },
+                  { id: 'playful', name: 'Playful', sub: 'Rounded / Fun' },
+                  { id: 'minimal', name: 'Minimal', sub: 'Clean Mono' },
+                ].map((font) => {
+                  const isSelected = (presentation?.theme?.fontStyle || 'modern') === font.id;
+                  return (
+                    <button
+                      key={font.id}
+                      type="button"
+                      onClick={() => handleUpdateTheme({ fontStyle: font.id })}
+                      className={`btn btn--sm ${isSelected ? 'btn--primary' : 'btn--ghost'}`}
+                      style={{ flexDirection: 'column', padding: '10px', height: 'auto', textAlign: 'center' }}
+                    >
+                      <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{font.name}</span>
+                      <span style={{ fontSize: '0.72rem', opacity: 0.7 }}>{font.sub}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Background Style */}
+            <div style={{ marginBottom: '28px' }}>
+              <label className="form-label" style={{ marginBottom: '12px', display: 'block' }}>
+                Slide Background Style
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+                {[
+                  { id: 'gradient', name: 'Gradient', desc: 'Subtle angle' },
+                  { id: 'solid', name: 'Solid', desc: 'Flat background' },
+                  { id: 'pattern', name: 'Pattern', desc: 'Dotted grid' },
+                ].map((bg) => {
+                  const isSelected = (presentation?.theme?.background || 'gradient') === bg.id;
+                  return (
+                    <button
+                      key={bg.id}
+                      type="button"
+                      onClick={() => handleUpdateTheme({ background: bg.id })}
+                      className={`btn btn--sm ${isSelected ? 'btn--primary' : 'btn--ghost'}`}
+                      style={{ flexDirection: 'column', padding: '10px', height: 'auto', textAlign: 'center' }}
+                    >
+                      <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{bg.name}</span>
+                      <span style={{ fontSize: '0.72rem', opacity: 0.7 }}>{bg.desc}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+              <button
+                type="button"
+                onClick={() => setShowThemeModal(false)}
+                className="btn btn--primary"
+                style={{ minWidth: '120px' }}
+              >
+                Done
               </button>
             </div>
           </div>

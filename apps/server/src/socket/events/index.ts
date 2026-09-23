@@ -354,6 +354,16 @@ export function registerSocketHandlers(io: IOServer): void {
       await handleLockVoting(io, socket, payload);
     });
 
+    socket.on('push_announcement', (payload: { sessionId: string; message: string }) => {
+      const data = socketSessions.get(socket.id);
+      if (!data?.isPresenter) return;
+      if (!payload?.sessionId || !payload?.message) return;
+      io.to(`session:${payload.sessionId}`).emit('announcement', {
+        message: payload.message,
+        timestamp: Date.now(),
+      });
+    });
+
     // ── Attendee: Join Waiting Lobby ──────────────────────────────────────
     socket.on('join_lobby', async (payload: JoinLobbyPayload) => {
       try {

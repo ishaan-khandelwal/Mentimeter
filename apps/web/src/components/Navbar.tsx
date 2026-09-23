@@ -30,6 +30,9 @@ export function Navbar() {
             <Link href="/dashboard" className="nav-link">
               Dashboard
             </Link>
+            <Link href="/templates" className="nav-link">
+              Templates
+            </Link>
             <Link href="/join" className="nav-link">
               Enter Code
             </Link>
@@ -61,17 +64,17 @@ export function Navbar() {
               </span>
               <button
                 onClick={() => signOut({ callbackUrl: '/' })}
-                className="btn btn-secondary btn-sm"
+                className="btn btn--secondary btn--sm"
               >
                 Sign out
               </button>
             </div>
           ) : (
             <div className="auth-buttons">
-              <Link href="/login" className="btn btn-secondary btn-sm">
+              <Link href="/login" className="btn btn--secondary btn--sm">
                 Log in
               </Link>
-              <Link href="/signup" className="btn btn-primary btn-sm">
+              <Link href="/signup" className="btn btn--primary btn--sm">
                 Sign up free
               </Link>
             </div>

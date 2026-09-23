@@ -49,9 +49,12 @@ export async function GET(_req: Request, { params }: RouteParams) {
 const UpdateSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   status: z.enum(['draft', 'live', 'ended']).optional(),
+  theme: z.record(z.any()).optional().nullable(),
+  isAsyncForm: z.boolean().optional(),
+  formDeadline: z.string().nullable().optional(),
 });
 
-// PATCH /api/v1/presentations/:id — update title or status
+// PATCH /api/v1/presentations/:id — update title, status, theme, or form settings
 export async function PATCH(req: Request, { params }: RouteParams) {
   const session = await getServerSession(authOptions);
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -72,9 +75,18 @@ export async function PATCH(req: Request, { params }: RouteParams) {
     return NextResponse.json({ error: result.error.flatten().fieldErrors }, { status: 400 });
   }
 
+  const updateData: any = {};
+  if (result.data.title !== undefined) updateData.title = result.data.title;
+  if (result.data.status !== undefined) updateData.status = result.data.status;
+  if (result.data.theme !== undefined) updateData.theme = result.data.theme;
+  if (result.data.isAsyncForm !== undefined) updateData.isAsyncForm = result.data.isAsyncForm;
+  if (result.data.formDeadline !== undefined) {
+    updateData.formDeadline = result.data.formDeadline ? new Date(result.data.formDeadline) : null;
+  }
+
   const updated = await prisma.presentation.update({
     where: { id: params.id },
-    data: result.data,
+    data: updateData,
   });
 
   return NextResponse.json({

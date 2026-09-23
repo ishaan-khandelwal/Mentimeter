@@ -14,6 +14,9 @@ const SlideSchema = z.object({
   options: z.array(z.string().max(200)).optional().default([]),
   order: z.number().int().min(0).optional(),
   config: z.record(z.any()).optional().default({}),
+  hideResults: z.boolean().optional().default(false),
+  timerSeconds: z.number().nullable().optional(),
+  maxVotes: z.number().int().min(1).max(20).optional().default(1),
 });
 
 // POST /api/v1/presentations/:id/slides — add a slide
@@ -52,6 +55,9 @@ export async function POST(req: Request, { params }: RouteParams) {
       question: result.data.question,
       options: result.data.options,
       config: result.data.config,
+      hideResults: result.data.hideResults,
+      timerSeconds: result.data.timerSeconds,
+      maxVotes: result.data.maxVotes,
       order,
     },
   });

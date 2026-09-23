@@ -6,6 +6,7 @@ import { getSocket } from '@/lib/socket';
 import Link from 'next/link';
 import QRCode from 'qrcode';
 import confetti from 'canvas-confetti';
+import QuizRaceLeaderboard from '@/components/QuizRaceLeaderboard';
 import type {
   GameState,
   LeaderboardEntry,
@@ -14,7 +15,21 @@ import type {
   GameStateChangedEvent,
 } from '@pollwave/shared';
 
-type SlideType = 'multiple_choice' | 'word_cloud' | 'open_text' | 'rating_scale' | 'ranking' | 'qa';
+type SlideType =
+  | 'multiple_choice'
+  | 'word_cloud'
+  | 'open_text'
+  | 'rating_scale'
+  | 'ranking'
+  | 'qa'
+  | 'scales'
+  | 'hundred_points'
+  | 'number'
+  | 'heading'
+  | 'paragraph'
+  | 'image'
+  | 'video'
+  | 'bullets';
 
 interface Slide {
   _id: string;
@@ -23,6 +38,9 @@ interface Slide {
   options?: string[];
   order: number;
   config?: Record<string, any>;
+  hideResults?: boolean;
+  timerSeconds?: number | null;
+  maxVotes?: number;
 }
 
 interface Presentation {
@@ -30,6 +48,8 @@ interface Presentation {
   title: string;
   joinCode: string;
   status: string;
+  theme?: any;
+  isAsyncForm?: boolean;
 }
 
 interface QAQuestion {
@@ -81,6 +101,24 @@ export default function PresenterLivePage() {
   const [aiSummary, setAiSummary] = useState<AiSummaryResult | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [showAiSummaryModal, setShowAiSummaryModal] = useState(false);
+
+  const [resultsRevealed, setResultsRevealed] = useState<Record<string, boolean>>({});
+  const [showAnnouncementModal, setShowAnnouncementModal] = useState(false);
+  const [announcementText, setAnnouncementText] = useState('');
+  const [announcementSent, setAnnouncementSent] = useState(false);
+
+  const handlePushAnnouncement = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!announcementText.trim() || !sessionId) return;
+    const socket = getSocket();
+    socket.emit('push_announcement', { sessionId, message: announcementText.trim() });
+    setAnnouncementSent(true);
+    setTimeout(() => {
+      setAnnouncementSent(false);
+      setShowAnnouncementModal(false);
+      setAnnouncementText('');
+    }, 1500);
+  };
 
   const [authError, setAuthError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -356,6 +394,14 @@ export default function PresenterLivePage() {
     });
   };
 
+  const handleToggleVoting = () => {
+    if (!sessionId) return;
+    const socket = getSocket();
+    const nextLocked = !votingLocked;
+    socket.emit('lock_voting', { sessionId, locked: nextLocked });
+    setVotingLocked(nextLocked);
+  };
+
   const handleLockQuestion = () => {
     if (!sessionId) return;
     const socket = getSocket();
@@ -491,18 +537,53 @@ export default function PresenterLivePage() {
     );
   }
 
-  // Option background colors (Kahoot / Mentimeter theme: Red, Blue, Yellow, Green)
+  // Option background colors (Kahoot / Mentimeter theme: Red, Saffron, Yellow, Green)
   const optionColors = [
-    { bg: '#ef4444', text: '#ffffff', symbol: '▲' },
-    { bg: '#3b82f6', text: '#ffffff', symbol: '◆' },
-    { bg: '#f59e0b', text: '#ffffff', symbol: '●' },
-    { bg: '#10b981', text: '#ffffff', symbol: '■' },
-    { bg: '#8b5cf6', text: '#ffffff', symbol: '★' },
-    { bg: '#ec4899', text: '#ffffff', symbol: '✦' },
+    { bg: '#ef4444', text: '#fffaf3', symbol: '▲' },
+    { bg: '#d1912c', text: '#fffaf3', symbol: '◆' },
+    { bg: '#f59e0b', text: '#fffaf3', symbol: '●' },
+    { bg: '#2f8f6b', text: '#fffaf3', symbol: '■' },
+    { bg: '#b65f78', text: '#fffaf3', symbol: '★' },
+    { bg: '#ec4899', text: '#fffaf3', symbol: '✦' },
   ];
 
+  // Dynamic presentation theme
+  const theme = presentation?.theme || { colorScheme: 'default', fontStyle: 'modern', background: 'gradient' };
+  const themeBgMap: Record<string, string> = {
+    saffron: 'radial-gradient(ellipse at top, #6b3448 0%, #5b3047 60%, #4a2b40 100%)',
+    forest: 'radial-gradient(ellipse at top, #2d6d56 0%, #285f4c 60%, #244c40 100%)',
+    sunset: 'radial-gradient(ellipse at top, #8f3449 0%, #6b2f40 60%, #4d2935 100%)',
+    plum: 'radial-gradient(ellipse at top, #6b3448 0%, #efe5dc 60%, #3f2940 100%)',
+    rose: 'radial-gradient(ellipse at top, #93405d 0%, #5c3649 60%, #4a2b3b 100%)',
+    amber: 'radial-gradient(ellipse at top, #80552b 0%, #5c473a 60%, #45372f 100%)',
+    clay: 'radial-gradient(ellipse at top, #f1e7dc 0%, #efe5dc 60%, #e8ddd3 100%)',
+    default: 'radial-gradient(ellipse at top, #6b3448 0%, #efe5dc 60%, #f7efe7 100%)',
+  };
+  const themeFontMap: Record<string, string> = {
+    classic: 'Georgia, serif',
+    playful: 'Comic Sans MS, cursive, sans-serif',
+    minimal: 'monospace, sans-serif',
+    modern: 'inherit',
+  };
+
+  const getCharacterClass = (index: number) =>
+    ['coral', 'saffron', 'emerald', 'plum', 'rose', 'clay'][index % 6];
+
+  const finalLeaderboardEntries = finalResults?.fullLeaderboard?.length
+    ? finalResults.fullLeaderboard
+    : leaderboard;
+
   return (
-    <div className="presenter-layout" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div
+      className="presenter-layout"
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        background: themeBgMap[theme.colorScheme] || themeBgMap.default,
+        fontFamily: themeFontMap[theme.fontStyle] || 'inherit',
+      }}
+    >
       {/* Top Presenter Toolbar */}
       <div className="presenter-toolbar" style={{ justifyContent: 'space-between', height: '68px', padding: '0 24px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
@@ -519,9 +600,9 @@ export default function PresenterLivePage() {
                 textTransform: 'uppercase',
                 padding: '3px 8px',
                 borderRadius: '6px',
-                background: 'rgba(124, 92, 252, 0.2)',
-                color: '#a78bfa',
-                border: '1px solid rgba(124, 92, 252, 0.3)',
+                background: 'rgba(217, 87, 69, 0.2)',
+                color: '#b65f78',
+                border: '1px solid rgba(217, 87, 69, 0.3)',
               }}
             >
               {gameState}
@@ -532,7 +613,7 @@ export default function PresenterLivePage() {
         {/* Join instructions for audience */}
         <div
           style={{
-            background: 'rgba(255, 255, 255, 0.05)',
+            background: 'rgba(92, 54, 73, 0.07)',
             border: '1px solid var(--color-border)',
             borderRadius: '100px',
             padding: '6px 20px',
@@ -568,7 +649,7 @@ export default function PresenterLivePage() {
         {/* Presence & Session Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.88rem' }}>
-            <span style={{ color: '#22c55e', fontSize: '1.2rem' }}>●</span>
+            <span style={{ color: '#3f9a73', fontSize: '1.2rem' }}>●</span>
             <span style={{ fontWeight: 700 }}>{Math.max(presenceCount, lobbyParticipants.length)}</span>
             <span style={{ color: 'var(--color-text-muted)' }}>players</span>
           </div>
@@ -596,7 +677,7 @@ export default function PresenterLivePage() {
             alignItems: 'center',
             justifyContent: 'center',
             padding: '40px 24px',
-            background: 'radial-gradient(ellipse at center, rgba(124, 92, 252, 0.12) 0%, rgba(13, 13, 26, 1) 70%)',
+            background: 'radial-gradient(ellipse at center, rgba(217, 87, 69, 0.12) 0%, rgba(251, 247, 240, 1) 70%)',
           }}
         >
           <div style={{ maxWidth: '850px', width: '100%', textAlign: 'center' }}>
@@ -607,9 +688,9 @@ export default function PresenterLivePage() {
                 gap: '8px',
                 padding: '6px 18px',
                 borderRadius: '100px',
-                background: 'rgba(124, 92, 252, 0.2)',
-                border: '1px solid rgba(124, 92, 252, 0.4)',
-                color: '#c4b5fd',
+                background: 'rgba(217, 87, 69, 0.2)',
+                border: '1px solid rgba(217, 87, 69, 0.4)',
+                color: '#9c4f73',
                 fontWeight: 700,
                 fontSize: '0.95rem',
                 marginBottom: '20px',
@@ -625,20 +706,20 @@ export default function PresenterLivePage() {
             {/* Huge Join Code Callout */}
             <div
               style={{
-                background: 'rgba(255, 255, 255, 0.04)',
-                border: '2px solid rgba(124, 92, 252, 0.4)',
+                background: 'rgba(92, 54, 73, 0.06)',
+                border: '2px solid rgba(217, 87, 69, 0.4)',
                 borderRadius: '24px',
                 padding: '28px 40px',
                 display: 'inline-flex',
                 flexDirection: 'column',
                 alignItems: 'center',
                 gap: '16px',
-                boxShadow: '0 12px 40px rgba(0, 0, 0, 0.4)',
+                boxShadow: '0 12px 40px rgba(63, 41, 64, 0.4)',
                 marginBottom: '36px',
               }}
             >
               <div style={{ color: 'var(--color-text-secondary)', fontSize: '1.2rem' }}>
-                Go to <strong style={{ color: '#ffffff' }}>{typeof window !== 'undefined' ? window.location.host : 'pollwave.io'}/join</strong>
+                Go to <strong style={{ color: '#fffaf3' }}>{typeof window !== 'undefined' ? window.location.host : 'pollwave.io'}/join</strong>
               </div>
               <div
                 style={{
@@ -658,14 +739,14 @@ export default function PresenterLivePage() {
                 <img
                   src={qrCodeUrl}
                   alt="QR Code"
-                  style={{ width: '160px', height: '160px', borderRadius: '12px', background: '#fff', padding: '6px' }}
+                  style={{ width: '160px', height: '160px', borderRadius: '12px', background: '#fffaf3', padding: '6px' }}
                 />
               )}
             </div>
 
             {/* Players Joined Counter */}
             <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px' }}>
-              <span style={{ fontSize: '1.3rem', fontWeight: 800, color: '#22c55e' }}>
+              <span style={{ fontSize: '1.3rem', fontWeight: 800, color: '#3f9a73' }}>
                 👥 {lobbyParticipants.length} Players Joined
               </span>
             </div>
@@ -680,9 +761,9 @@ export default function PresenterLivePage() {
                 maxHeight: '220px',
                 overflowY: 'auto',
                 padding: '16px',
-                background: 'rgba(255, 255, 255, 0.02)',
+                background: 'rgba(92, 54, 73, 0.04)',
                 borderRadius: '18px',
-                border: '1px solid rgba(255, 255, 255, 0.05)',
+                border: '1px solid rgba(92, 54, 73, 0.07)',
                 marginBottom: '36px',
               }}
             >
@@ -700,14 +781,14 @@ export default function PresenterLivePage() {
                       gap: '8px',
                       padding: '8px 16px',
                       borderRadius: '100px',
-                      background: 'rgba(255, 255, 255, 0.06)',
-                      border: '1px solid rgba(255, 255, 255, 0.12)',
-                      boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+                      background: 'rgba(92, 54, 73, 0.08)',
+                      border: '1px solid rgba(92, 54, 73, 0.14)',
+                      boxShadow: '0 4px 12px rgba(63,41,64,0.2)',
                       animation: 'popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
                     }}
                   >
                     <span style={{ fontSize: '1.4rem' }}>{p.avatar}</span>
-                    <span style={{ fontWeight: 700, fontSize: '1rem', color: '#ffffff' }}>{p.nickname}</span>
+                    <span style={{ fontWeight: 700, fontSize: '1rem', color: '#fffaf3' }}>{p.nickname}</span>
                   </div>
                 ))
               )}
@@ -722,7 +803,7 @@ export default function PresenterLivePage() {
                 padding: '16px 48px',
                 borderRadius: '100px',
                 fontWeight: 800,
-                boxShadow: '0 8px 30px rgba(124, 92, 252, 0.5)',
+                boxShadow: '0 8px 30px rgba(217, 87, 69, 0.5)',
               }}
             >
               🚀 Start Quiz
@@ -740,7 +821,7 @@ export default function PresenterLivePage() {
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            background: 'radial-gradient(circle at center, rgba(236, 72, 153, 0.15) 0%, rgba(13, 13, 26, 1) 70%)',
+            background: 'radial-gradient(circle at center, rgba(236, 72, 153, 0.15) 0%, rgba(251, 247, 240, 1) 70%)',
             textAlign: 'center',
             padding: '40px',
           }}
@@ -753,13 +834,13 @@ export default function PresenterLivePage() {
               width: '180px',
               height: '180px',
               borderRadius: '50%',
-              background: 'linear-gradient(135deg, #ec4899 0%, #7c5cfc 100%)',
+              background: 'linear-gradient(135deg, #ec4899 0%, #d95745 100%)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               fontSize: '6.5rem',
               fontWeight: 900,
-              color: '#ffffff',
+              color: '#fffaf3',
               boxShadow: '0 0 60px rgba(236, 72, 153, 0.6)',
               marginBottom: '32px',
               animation: 'pulse 1s infinite',
@@ -786,10 +867,10 @@ export default function PresenterLivePage() {
                   justifyContent: 'space-between',
                   alignItems: 'center',
                   marginBottom: '28px',
-                  background: 'rgba(255, 255, 255, 0.03)',
+                  background: 'rgba(92, 54, 73, 0.05)',
                   padding: '16px 28px',
                   borderRadius: '16px',
-                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                  border: '1px solid rgba(92, 54, 73, 0.08)',
                 }}
               >
                 <div>
@@ -820,12 +901,12 @@ export default function PresenterLivePage() {
                         width: '74px',
                         height: '74px',
                         borderRadius: '50%',
-                        border: `4px solid ${remainingTime <= 5 ? '#ef4444' : '#7c5cfc'}`,
-                        background: remainingTime <= 5 ? 'rgba(239, 68, 68, 0.15)' : 'rgba(124, 92, 252, 0.15)',
+                        border: `4px solid ${remainingTime <= 5 ? '#ef4444' : '#d95745'}`,
+                        background: remainingTime <= 5 ? 'rgba(239, 68, 68, 0.15)' : 'rgba(217, 87, 69, 0.15)',
                         fontSize: '1.8rem',
                         fontWeight: 900,
-                        color: remainingTime <= 5 ? '#ef4444' : '#ffffff',
-                        boxShadow: remainingTime <= 5 ? '0 0 24px rgba(239, 68, 68, 0.5)' : '0 0 20px rgba(124, 92, 252, 0.3)',
+                        color: remainingTime <= 5 ? '#ef4444' : '#fffaf3',
+                        boxShadow: remainingTime <= 5 ? '0 0 24px rgba(239, 68, 68, 0.5)' : '0 0 20px rgba(217, 87, 69, 0.3)',
                       }}
                     >
                       {remainingTime}s
@@ -864,7 +945,7 @@ export default function PresenterLivePage() {
                         padding: '6px 14px',
                         borderRadius: '100px',
                         background: 'rgba(34, 197, 94, 0.2)',
-                        color: '#4ade80',
+                        color: '#2f8f6b',
                         fontWeight: 800,
                         fontSize: '0.9rem',
                         border: '1px solid rgba(34, 197, 94, 0.4)',
@@ -923,10 +1004,10 @@ export default function PresenterLivePage() {
                           borderRadius: '20px',
                           background: isCorrectAnswer
                             ? 'rgba(34, 197, 94, 0.18)'
-                            : 'rgba(255, 255, 255, 0.04)',
+                            : 'rgba(92, 54, 73, 0.06)',
                           border: isCorrectAnswer
-                            ? '3px solid #22c55e'
-                            : '2px solid rgba(255, 255, 255, 0.08)',
+                            ? '3px solid #3f9a73'
+                            : '2px solid rgba(92, 54, 73, 0.10)',
                           boxShadow: isCorrectAnswer ? '0 0 30px rgba(34, 197, 94, 0.4)' : 'none',
                           padding: '24px',
                           position: 'relative',
@@ -949,7 +1030,7 @@ export default function PresenterLivePage() {
                               bottom: 0,
                               width: `${percent}%`,
                               background: isCorrectAnswer ? 'rgba(34, 197, 94, 0.25)' : `${colorScheme.bg}25`,
-                              borderRight: isCorrectAnswer ? '3px solid #22c55e' : `3px solid ${colorScheme.bg}`,
+                              borderRight: isCorrectAnswer ? '3px solid #3f9a73' : `3px solid ${colorScheme.bg}`,
                               zIndex: 0,
                               transition: 'width 0.6s cubic-bezier(0.16, 1, 0.3, 1)',
                             }}
@@ -969,19 +1050,19 @@ export default function PresenterLivePage() {
                               alignItems: 'center',
                               justifyContent: 'center',
                               fontSize: '1.4rem',
-                              boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                              boxShadow: '0 4px 12px rgba(63,41,64,0.3)',
                             }}
                           >
                             {colorScheme.symbol}
                           </span>
-                          <span style={{ fontSize: '1.35rem', fontWeight: 700, color: '#ffffff', flex: 1 }}>
+                          <span style={{ fontSize: '1.35rem', fontWeight: 700, color: '#fffaf3', flex: 1 }}>
                             {opt}
                           </span>
                           {isCorrectAnswer && (
                             <span
                               style={{
-                                background: '#22c55e',
-                                color: '#0d0d1a',
+                                background: '#3f9a73',
+                                color: '#fbf7f0',
                                 fontWeight: 900,
                                 fontSize: '0.85rem',
                                 padding: '4px 12px',
@@ -1010,7 +1091,7 @@ export default function PresenterLivePage() {
                             <span style={{ fontSize: '1.05rem', color: 'var(--color-text-secondary)', fontWeight: 600 }}>
                               {votes} {votes === 1 ? 'vote' : 'votes'}
                             </span>
-                            <span style={{ fontSize: '1.8rem', fontWeight: 900, color: isCorrectAnswer ? '#4ade80' : '#ffffff' }}>
+                            <span style={{ fontSize: '1.8rem', fontWeight: 900, color: isCorrectAnswer ? '#2f8f6b' : '#fffaf3' }}>
                               {percent}%
                             </span>
                           </div>
@@ -1028,7 +1109,7 @@ export default function PresenterLivePage() {
                         <p style={{ color: 'var(--color-text-muted)' }}>Waiting for audience words...</p>
                       ) : (
                         Object.entries(currentTally).map(([w, c]) => (
-                          <span key={w} style={{ fontSize: `${1.2 + c * 0.5}rem`, fontWeight: 800, color: '#a78bfa' }}>
+                          <span key={w} style={{ fontSize: `${1.2 + c * 0.5}rem`, fontWeight: 800, color: '#b65f78' }}>
                             {w}
                           </span>
                         ))
@@ -1048,7 +1129,7 @@ export default function PresenterLivePage() {
 
                   {activeSlide.type === 'rating_scale' && (
                     <div className="card" style={{ padding: '36px', textAlign: 'center' }}>
-                      <div style={{ fontSize: '4rem', fontWeight: 900, color: '#7c5cfc' }}>
+                      <div style={{ fontSize: '4rem', fontWeight: 900, color: '#d95745' }}>
                         {totalVotes > 0
                           ? (
                               Object.entries(currentTally).reduce((a, [v, c]) => a + Number(v) * c, 0) / totalVotes
@@ -1069,6 +1150,145 @@ export default function PresenterLivePage() {
                       ))}
                     </div>
                   )}
+
+                  {/* Scales / Likert Matrix */}
+                  {activeSlide.type === 'scales' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                      {(activeSlide.options || []).map((statement) => {
+                        const score = currentTally[statement] || 0;
+                        return (
+                          <div key={statement} className="card" style={{ padding: '24px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '1.2rem', fontWeight: 700 }}>
+                              <span>{statement}</span>
+                              <span style={{ color: '#2f8f6b' }}>{score} pts</span>
+                            </div>
+                            <div style={{ height: '14px', background: 'rgba(92, 54, 73, 0.08)', borderRadius: '8px', overflow: 'hidden' }}>
+                              <div style={{ width: `${Math.min(100, Math.max(10, score * 8))}%`, height: '100%', background: 'linear-gradient(90deg, #2d6d56, #2f8f6b)', borderRadius: '8px' }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* 100 Points Budget Allocation */}
+                  {activeSlide.type === 'hundred_points' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      {(activeSlide.options || []).map((opt) => {
+                        const pts = currentTally[opt] || 0;
+                        return (
+                          <div key={opt} className="card" style={{ padding: '20px 24px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '1.2rem', fontWeight: 700 }}>
+                              <span>{opt}</span>
+                              <span style={{ color: '#b65f78' }}>{pts} Points</span>
+                            </div>
+                            <div style={{ height: '16px', background: 'rgba(92, 54, 73, 0.08)', borderRadius: '8px', overflow: 'hidden' }}>
+                              <div style={{ width: `${Math.min(100, pts)}%`, height: '100%', background: 'linear-gradient(90deg, #d95745, #b65f78)', borderRadius: '8px' }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Number Estimation Slide */}
+                  {activeSlide.type === 'number' && (() => {
+                    const nums = Object.entries(currentTally).map(([v, c]) => Array(c).fill(Number(v))).flat().filter((n) => !isNaN(n));
+                    const avg = nums.length > 0 ? (nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(1) : '—';
+                    return (
+                      <div className="card" style={{ padding: '48px 24px', textAlign: 'center' }}>
+                        <div style={{ fontSize: '5rem', fontWeight: 900, background: 'var(--gradient-brand)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', lineHeight: 1 }}>
+                          {avg}
+                        </div>
+                        <p style={{ color: 'var(--color-text-secondary)', fontSize: '1.2rem', marginTop: '16px' }}>
+                          Average Guess ({nums.length} votes)
+                        </p>
+                        {activeSlide.config?.correctNumber !== undefined && (
+                          <div style={{ marginTop: '20px' }}>
+                            <span className="badge badge--success" style={{ fontSize: '1.1rem', padding: '6px 18px' }}>
+                              🎯 Target Answer: {activeSlide.config.correctNumber}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Heading Slide */}
+                  {activeSlide.type === 'heading' && (
+                    <div className="card" style={{ padding: '64px 36px', textAlign: 'center' }}>
+                      <h1 style={{ fontSize: 'clamp(2.5rem, 5vw, 4rem)', fontWeight: 900, marginBottom: '20px', lineHeight: 1.2 }}>
+                        {activeSlide.question}
+                      </h1>
+                      {activeSlide.config?.subtitle && (
+                        <p style={{ fontSize: '1.5rem', color: 'var(--color-text-secondary)', maxWidth: '750px', margin: '0 auto' }}>
+                          {activeSlide.config.subtitle}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Paragraph / Rich Text */}
+                  {activeSlide.type === 'paragraph' && (
+                    <div className="card" style={{ padding: '48px 40px' }}>
+                      <h2 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '20px' }}>{activeSlide.question}</h2>
+                      <div style={{ fontSize: '1.2rem', lineHeight: 1.8, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap' }}>
+                        {activeSlide.config?.body || 'No content added yet.'}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Image Slide */}
+                  {activeSlide.type === 'image' && (
+                    <div className="card" style={{ padding: '32px', textAlign: 'center' }}>
+                      <h2 style={{ fontSize: '1.8rem', fontWeight: 800, marginBottom: '20px' }}>{activeSlide.question}</h2>
+                      {activeSlide.config?.imageUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={activeSlide.config.imageUrl}
+                          alt={activeSlide.question}
+                          style={{ maxWidth: '100%', maxHeight: '55vh', borderRadius: '16px', objectFit: 'contain', margin: '0 auto', boxShadow: '0 12px 30px rgba(63,41,64,0.5)' }}
+                        />
+                      )}
+                      {activeSlide.config?.caption && (
+                        <p style={{ color: 'var(--color-text-muted)', fontSize: '1rem', marginTop: '16px' }}>{activeSlide.config.caption}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Video Slide */}
+                  {activeSlide.type === 'video' && (
+                    <div className="card" style={{ padding: '32px', textAlign: 'center' }}>
+                      <h2 style={{ fontSize: '1.8rem', fontWeight: 800, marginBottom: '20px' }}>{activeSlide.question}</h2>
+                      {activeSlide.config?.videoUrl ? (
+                        <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0, overflow: 'hidden', borderRadius: '16px' }}>
+                          <iframe
+                            src={activeSlide.config.videoUrl.replace('watch?v=', 'embed/')}
+                            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }}
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                            allowFullScreen
+                          />
+                        </div>
+                      ) : (
+                        <p style={{ color: 'var(--color-text-muted)' }}>No video URL provided.</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Bullets Slide */}
+                  {activeSlide.type === 'bullets' && (
+                    <div className="card" style={{ padding: '48px 40px' }}>
+                      <h2 style={{ fontSize: '2.2rem', fontWeight: 800, marginBottom: '32px' }}>{activeSlide.question}</h2>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                        {(activeSlide.options || []).map((b, i) => (
+                          <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', fontSize: '1.3rem' }}>
+                            <span style={{ color: '#b65f78', fontWeight: 900 }}>✦</span>
+                            <span>{b}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1076,208 +1296,18 @@ export default function PresenterLivePage() {
         </div>
       )}
 
-      {/* ─── 4. LEADERBOARD STATE ─────────────────────────────────────────── */}
+      {/* ─── 4. LEADERBOARD STATE (Animated Stadium Quiz Race Track) ──────── */}
       {gameState === 'LEADERBOARD' && (
-        <div
-          style={{
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            padding: '40px 24px',
-            background: 'radial-gradient(ellipse at top, rgba(124, 92, 252, 0.15) 0%, rgba(13, 13, 26, 1) 75%)',
-            overflowY: 'auto',
-          }}
-        >
-          <div style={{ maxWidth: '850px', width: '100%' }}>
-            <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-              <span
-                style={{
-                  fontSize: '0.9rem',
-                  fontWeight: 800,
-                  color: '#fbbf24',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.1em',
-                }}
-              >
-                🏆 ROUND {currentIndex + 1} STANDINGS
-              </span>
-              <h1 style={{ fontSize: '3rem', fontWeight: 900, marginTop: '8px' }}>Leaderboard</h1>
-            </div>
-
-            {/* Top 10 Player Cards */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '36px' }}>
-              {leaderboard.length === 0 ? (
-                <div className="card" style={{ padding: '40px', textAlign: 'center' }}>
-                  <p style={{ color: 'var(--color-text-muted)', fontSize: '1.2rem' }}>
-                    No scores recorded yet.
-                  </p>
-                </div>
-              ) : (
-                leaderboard.map((entry, idx) => {
-                  const isFirst = idx === 0;
-                  const isTopThree = idx < 3;
-
-                  return (
-                    <div
-                      key={entry.token}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '16px 24px',
-                        borderRadius: '16px',
-                        background: isFirst
-                          ? 'linear-gradient(90deg, rgba(245, 158, 11, 0.25) 0%, rgba(255, 255, 255, 0.05) 100%)'
-                          : 'rgba(255, 255, 255, 0.04)',
-                        border: isFirst
-                          ? '2px solid rgba(245, 158, 11, 0.6)'
-                          : '1px solid rgba(255, 255, 255, 0.08)',
-                        boxShadow: isFirst ? '0 0 30px rgba(245, 158, 11, 0.3)' : 'none',
-                        animation: 'pageEnter 0.4s ease forwards',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '18px' }}>
-                        {/* Rank Badge */}
-                        <span
-                          style={{
-                            width: '40px',
-                            height: '40px',
-                            borderRadius: '12px',
-                            background: isFirst
-                              ? '#f59e0b'
-                              : idx === 1
-                              ? '#94a3b8'
-                              : idx === 2
-                              ? '#d97706'
-                              : 'rgba(255, 255, 255, 0.1)',
-                            color: isTopThree ? '#0d0d1a' : '#ffffff',
-                            fontWeight: 900,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontSize: '1.2rem',
-                          }}
-                        >
-                          {isFirst ? '👑' : idx + 1}
-                        </span>
-
-                        {/* Avatar & Nickname */}
-                        <span style={{ fontSize: '1.8rem' }}>{entry.avatar}</span>
-                        <div>
-                          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#ffffff' }}>
-                            {entry.nickname}
-                          </div>
-                          {entry.streak > 1 && (
-                            <span style={{ fontSize: '0.8rem', color: '#f97316', fontWeight: 700 }}>
-                              🔥 {entry.streak} Streak!
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Score & Rank Change */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                        {entry.lastTimeTaken !== undefined && entry.lastTimeTaken > 0 && (
-                          <span
-                            style={{
-                              fontSize: '0.85rem',
-                              fontWeight: 700,
-                              color: '#38bdf8',
-                              background: 'rgba(56, 189, 248, 0.12)',
-                              border: '1px solid rgba(56, 189, 248, 0.25)',
-                              padding: '4px 8px',
-                              borderRadius: '8px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                            }}
-                            title={`Answer speed: ${entry.lastTimeTaken}s`}
-                          >
-                            ⚡ {entry.lastTimeTaken}s
-                          </span>
-                        )}
-
-                        {entry.lastPoints > 0 && (
-                          <span
-                            style={{
-                              fontSize: '0.9rem',
-                              fontWeight: 800,
-                              color: '#22c55e',
-                              background: 'rgba(34, 197, 94, 0.15)',
-                              border: '1px solid rgba(34, 197, 94, 0.3)',
-                              padding: '4px 10px',
-                              borderRadius: '8px',
-                            }}
-                          >
-                            +{entry.lastPoints}
-                          </span>
-                        )}
-
-                        {/* Rank Delta */}
-                        {typeof entry.rankChange === 'number' ? (
-                          entry.rankChange > 0 ? (
-                            <span style={{ color: '#22c55e', fontWeight: 800, fontSize: '0.9rem' }}>
-                              ▲ {entry.rankChange}
-                            </span>
-                          ) : entry.rankChange < 0 ? (
-                            <span style={{ color: '#ef4444', fontWeight: 800, fontSize: '0.9rem' }}>
-                              ▼ {Math.abs(entry.rankChange)}
-                            </span>
-                          ) : (
-                            <span style={{ color: 'var(--color-text-muted)', fontWeight: 800, fontSize: '0.9rem' }}>
-                              -
-                            </span>
-                          )
-                        ) : (
-                          <span style={{ color: '#38bdf8', fontWeight: 800, fontSize: '0.85rem' }}>NEW</span>
-                        )}
-
-                        <span style={{ fontSize: '1.6rem', fontWeight: 900, minWidth: '100px', textAlign: 'right' }}>
-                          {entry.score.toLocaleString()}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            {/* Advance Button */}
-            <div style={{ textAlign: 'center' }}>
-              {currentIndex < slides.length - 1 ? (
-                <button
-                  onClick={handleNextQuestion}
-                  className="btn btn--primary"
-                  style={{
-                    fontSize: '1.25rem',
-                    padding: '16px 40px',
-                    borderRadius: '100px',
-                    fontWeight: 800,
-                    boxShadow: '0 8px 30px rgba(124, 92, 252, 0.5)',
-                  }}
-                >
-                  Next Question ({currentIndex + 2}/{slides.length}) ➔
-                </button>
-              ) : (
-                <button
-                  onClick={handleShowFinalResults}
-                  className="btn btn--primary"
-                  style={{
-                    fontSize: '1.25rem',
-                    padding: '16px 48px',
-                    borderRadius: '100px',
-                    fontWeight: 800,
-                    background: 'linear-gradient(135deg, #f59e0b 0%, #ec4899 100%)',
-                    boxShadow: '0 8px 30px rgba(245, 158, 11, 0.5)',
-                  }}
-                >
-                  🎉 Final Podium & Results
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+        <QuizRaceLeaderboard
+          leaderboard={leaderboard}
+          lobbyParticipants={lobbyParticipants}
+          joinCode={presentation?.joinCode}
+          currentQuestionIndex={currentIndex + 1}
+          totalQuestions={slides.length}
+          onNextQuestion={handleNextQuestion}
+          onShowFinalResults={handleShowFinalResults}
+          isLastQuestion={currentIndex >= slides.length - 1}
+        />
       )}
 
       {/* ─── 5. FINAL_RESULTS STATE (Olympic Podium & Confetti) ───────────── */}
@@ -1289,7 +1319,7 @@ export default function PresenterLivePage() {
             flexDirection: 'column',
             alignItems: 'center',
             padding: '40px 24px',
-            background: 'radial-gradient(ellipse at center, rgba(245, 158, 11, 0.2) 0%, rgba(13, 13, 26, 1) 70%)',
+            background: 'radial-gradient(ellipse at center, rgba(245, 158, 11, 0.2) 0%, rgba(251, 247, 240, 1) 70%)',
             overflowY: 'auto',
           }}
         >
@@ -1336,7 +1366,7 @@ export default function PresenterLivePage() {
                     <div style={{ fontWeight: 800, fontSize: '1.2rem', marginBottom: '4px' }}>
                       {finalResults.podium[1].nickname}
                     </div>
-                    <div style={{ fontWeight: 700, fontSize: '1rem', color: '#cbd5e1', marginBottom: '12px' }}>
+                    <div style={{ fontWeight: 700, fontSize: '1rem', color: '#806c76', marginBottom: '12px' }}>
                       {finalResults.podium[1].score.toLocaleString()} pts
                     </div>
                   </>
@@ -1348,15 +1378,15 @@ export default function PresenterLivePage() {
                     width: '100%',
                     height: '180px',
                     borderRadius: '16px 16px 0 0',
-                    background: 'linear-gradient(180deg, #94a3b8 0%, #475569 100%)',
+                    background: 'linear-gradient(180deg, #b9a8ad 0%, #806c76 100%)',
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: '#ffffff',
+                    color: '#fffaf3',
                     fontWeight: 900,
                     fontSize: '2rem',
-                    boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
+                    boxShadow: '0 8px 30px rgba(63,41,64,0.5)',
                   }}
                 >
                   🥈 2nd
@@ -1380,7 +1410,7 @@ export default function PresenterLivePage() {
                     <div style={{ fontWeight: 900, fontSize: '1.5rem', color: '#fbbf24', marginBottom: '4px' }}>
                       {finalResults.podium[0].nickname}
                     </div>
-                    <div style={{ fontWeight: 800, fontSize: '1.2rem', color: '#ffffff', marginBottom: '14px' }}>
+                    <div style={{ fontWeight: 800, fontSize: '1.2rem', color: '#fffaf3', marginBottom: '14px' }}>
                       {finalResults.podium[0].score.toLocaleString()} pts
                     </div>
                   </>
@@ -1397,7 +1427,7 @@ export default function PresenterLivePage() {
                     flexDirection: 'column',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: '#0d0d1a',
+                    color: '#fbf7f0',
                     fontWeight: 900,
                     fontSize: '2.4rem',
                     boxShadow: '0 0 50px rgba(251, 191, 36, 0.5)',
@@ -1440,10 +1470,10 @@ export default function PresenterLivePage() {
                     flexDirection: 'column',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: '#ffffff',
+                    color: '#fffaf3',
                     fontWeight: 900,
                     fontSize: '1.8rem',
-                    boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
+                    boxShadow: '0 8px 30px rgba(63,41,64,0.5)',
                   }}
                 >
                   🥉 3rd
@@ -1470,7 +1500,7 @@ export default function PresenterLivePage() {
           style={{
             position: 'fixed',
             inset: 0,
-            background: 'rgba(0,0,0,0.8)',
+            background: 'rgba(63,41,64,0.8)',
             backdropFilter: 'blur(8px)',
             display: 'flex',
             alignItems: 'center',
@@ -1510,7 +1540,7 @@ export default function PresenterLivePage() {
           style={{
             position: 'fixed',
             inset: 0,
-            background: 'rgba(0,0,0,0.75)',
+            background: 'rgba(63,41,64,0.75)',
             backdropFilter: 'blur(8px)',
             display: 'flex',
             alignItems: 'center',
@@ -1590,6 +1620,173 @@ export default function PresenterLivePage() {
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Floating Presenter Toolbar */}
+      <div
+        style={{
+          position: 'fixed',
+          bottom: 24,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'rgba(241, 231, 220, 0.88)',
+          backdropFilter: 'blur(16px)',
+          border: '1px solid rgba(92, 54, 73, 0.14)',
+          borderRadius: '100px',
+          padding: '8px 16px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          zIndex: 900,
+          boxShadow: '0 12px 32px rgba(63, 41, 64, 0.5)',
+        }}
+      >
+        <button
+          onClick={handlePrevSlide}
+          disabled={currentIndex <= 0}
+          className="btn btn--ghost btn--sm"
+          title="Previous Slide (←)"
+          style={{ borderRadius: '50%', width: 36, height: 36, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          ←
+        </button>
+
+        <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-text-secondary)', padding: '0 4px' }}>
+          {currentIndex + 1} / {slides.length}
+        </span>
+
+        <button
+          onClick={handleNextSlide}
+          disabled={currentIndex >= slides.length - 1}
+          className="btn btn--ghost btn--sm"
+          title="Next Slide (→)"
+          style={{ borderRadius: '50%', width: 36, height: 36, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          →
+        </button>
+
+        <div style={{ width: 1, height: 20, background: 'rgba(92, 54, 73, 0.14)' }} />
+
+        <button
+          onClick={handleToggleVoting}
+          className={`btn btn--sm ${votingLocked ? 'btn--primary' : 'btn--ghost'}`}
+          title="Toggle Voting Lock"
+          style={{ fontSize: '0.82rem' }}
+        >
+          {votingLocked ? '🔒 Locked' : '🔓 Unlocked'}
+        </button>
+
+        {activeSlide && (
+          <button
+            onClick={() => {
+              setResultsRevealed((prev) => ({
+                ...prev,
+                [activeSlide._id]: !prev[activeSlide._id],
+              }));
+            }}
+            className="btn btn--ghost btn--sm"
+            title="Toggle Results Visibility for Audience"
+            style={{ fontSize: '0.82rem' }}
+          >
+            {resultsRevealed[activeSlide._id] ? '👁 Hide Results' : '✨ Show Results'}
+          </button>
+        )}
+
+        <button
+          onClick={() => setShowAnnouncementModal(true)}
+          className="btn btn--ghost btn--sm"
+          title="Broadcast Announcement to Attendees"
+          style={{ fontSize: '0.82rem' }}
+        >
+          📢 Announcement
+        </button>
+
+        <button
+          onClick={() => setShowQrModal(true)}
+          className="btn btn--ghost btn--sm"
+          title="Show Join QR Code"
+          style={{ borderRadius: '50%', width: 36, height: 36, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          📱
+        </button>
+
+        <button
+          onClick={() => {
+            if (!document.fullscreenElement) {
+              document.documentElement.requestFullscreen().catch(() => {});
+            } else {
+              document.exitFullscreen().catch(() => {});
+            }
+          }}
+          className="btn btn--ghost btn--sm"
+          title="Fullscreen Toggle (F)"
+          style={{ borderRadius: '50%', width: 36, height: 36, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          ⛶
+        </button>
+      </div>
+
+      {/* Push Announcement Modal */}
+      {showAnnouncementModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(63,41,64,0.7)',
+            backdropFilter: 'blur(8px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '16px',
+          }}
+          onClick={() => setShowAnnouncementModal(false)}
+        >
+          <div
+            className="card"
+            style={{ width: '100%', maxWidth: '460px', padding: '32px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+              <span style={{ fontSize: '1.6rem' }}>📢</span>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Push Announcement</h2>
+            </div>
+            <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.88rem', marginBottom: '20px' }}>
+              Send an instant banner notification to all connected audience screens.
+            </p>
+
+            <form onSubmit={handlePushAnnouncement}>
+              <div className="form-group" style={{ marginBottom: '20px' }}>
+                <textarea
+                  rows={3}
+                  placeholder="e.g. Please submit your answers in the next 30 seconds!"
+                  value={announcementText}
+                  onChange={(e) => setAnnouncementText(e.target.value)}
+                  className="form-textarea"
+                  autoFocus
+                  required
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowAnnouncementModal(false)}
+                  className="btn btn--ghost"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!announcementText.trim() || announcementSent}
+                  className="btn btn--primary"
+                >
+                  {announcementSent ? '✓ Sent to Audience!' : '🚀 Push to Everyone'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

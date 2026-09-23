@@ -80,7 +80,7 @@ function getOrCreateSlideTally(sessionId: string, slideId: string): Tally {
 export async function submitVote(
   sessionId: string,
   slideId: string,
-  value: string | string[] | number,
+  value: string | string[] | number | Record<string, any>,
   hashedToken: string,
 ): Promise<boolean> {
   // Deduplication check (Redis Set per slide per session)
@@ -88,14 +88,22 @@ export async function submitVote(
   const isNew = await redis.sadd(votersKey, hashedToken);
   if (!isNew) return false; // already voted
 
-  // Normalize value(s) to strings for tally keys
-  const values = Array.isArray(value) ? value : [String(value)];
   const slideTallyKey = keys.slideTally(sessionId, slideId);
 
   // Update Redis tally (atomic, consistent across instances)
   const pipeline = redis.pipeline();
-  for (const v of values) {
-    pipeline.hincrby(slideTallyKey, v, 1);
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    for (const [k, v] of Object.entries(value)) {
+      const num = parseInt(String(v), 10) || 0;
+      if (num !== 0) {
+        pipeline.hincrby(slideTallyKey, k, num);
+      }
+    }
+  } else {
+    const values = Array.isArray(value) ? value : [String(value)];
+    for (const v of values) {
+      pipeline.hincrby(slideTallyKey, v, 1);
+    }
   }
   await pipeline.exec();
 

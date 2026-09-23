@@ -21,18 +21,21 @@ model User {
 }
 
 model Presentation {
-  id        String      @id @default(cuid())
-  title     String
-  joinCode  String      @unique
-  ownerId   String
-  owner     User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  status    String      @default("draft") // "draft" | "live" | "ended"
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-  slides    Slide[]
-  sessions  Session[]
-  responses Response[]
-  analytics Analytics[]
+  id           String      @id @default(cuid())
+  title        String
+  joinCode     String      @unique
+  ownerId      String
+  owner        User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  status       String      @default("draft") // "draft" | "live" | "ended"
+  theme        Json?       // PresentationTheme object { colorScheme, fontStyle, background }
+  isAsyncForm  Boolean     @default(false) // form mode: participants respond via link, no live session
+  formDeadline DateTime?   // optional deadline for async form
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  slides       Slide[]
+  sessions     Session[]
+  responses    Response[]
+  analytics    Analytics[]
 
   @@index([ownerId])
   @@index([joinCode])
@@ -44,10 +47,13 @@ model Slide {
   presentationId String
   presentation   Presentation @relation(fields: [presentationId], references: [id], onDelete: Cascade)
   order          Int
-  type           String // "multiple_choice" | "word_cloud" | "open_text" | "rating_scale" | "ranking" | "qa"
+  type           String // "multiple_choice" | "word_cloud" | "open_text" | "rating_scale" | "ranking" | "qa" | "scales" | "hundred_points" | "number" | "heading" | "paragraph" | "image" | "video" | "bullets"
   question       String
-  options        Json? // array of strings
-  config         Json? // custom configuration options
+  options        Json?        // array of strings
+  config         Json?        // custom configuration options
+  hideResults    Boolean      @default(false) // hide results until presenter reveals
+  timerSeconds   Int?         // per-slide countdown timer (null = no timer)
+  maxVotes       Int          @default(1)     // max choices per participant (for multiple_choice)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   responses      Response[]

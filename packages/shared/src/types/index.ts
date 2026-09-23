@@ -1,12 +1,22 @@
 // ─── Slide Types ────────────────────────────────────────────────────────────
 
 export type SlideType =
+  // Interactive (voting)
   | 'multiple_choice'
   | 'word_cloud'
   | 'open_text'
   | 'rating'
   | 'ranking'
-  | 'qa';
+  | 'qa'
+  | 'scales'          // Likert / opinion scale
+  | 'hundred_points'  // Budget allocation — distribute 100 points
+  | 'number'          // Single numeric input
+  // Content (no voting)
+  | 'heading'
+  | 'paragraph'
+  | 'image'
+  | 'video'
+  | 'bullets';
 
 // ─── Presentation Status ─────────────────────────────────────────────────────
 
@@ -19,6 +29,27 @@ export type SessionStatus = 'active' | 'ended';
 // ─── User Plan ────────────────────────────────────────────────────────────────
 
 export type UserPlan = 'free' | 'pro';
+
+// ─── Presentation Theme ───────────────────────────────────────────────────────
+
+export type ColorScheme =
+  | 'default'
+  | 'ocean'
+  | 'forest'
+  | 'sunset'
+  | 'midnight'
+  | 'rose'
+  | 'amber'
+  | 'slate'
+  | 'custom';
+
+export interface PresentationTheme {
+  colorScheme: ColorScheme;
+  fontStyle: 'modern' | 'classic' | 'playful' | 'minimal';
+  background: 'solid' | 'gradient' | 'pattern';
+  primaryColor?: string;   // hex when colorScheme='custom'
+  accentColor?: string;
+}
 
 // ─── Plain (serialized) interfaces used on the client ────────────────────────
 
@@ -37,6 +68,10 @@ export interface ISlidePublic {
   options: string[];
   order: number;
   aiGenerated: boolean;
+  config?: Record<string, any>;
+  hideResults?: boolean;
+  timerSeconds?: number | null;
+  maxVotes?: number;
 }
 
 export interface IPresentationPublic {
@@ -45,6 +80,9 @@ export interface IPresentationPublic {
   title: string;
   joinCode: string;
   status: PresentationStatus;
+  theme?: PresentationTheme;
+  isAsyncForm?: boolean;
+  formDeadline?: string | null;
   createdAt: string;
   slides?: ISlidePublic[];
 }
@@ -69,6 +107,7 @@ export interface IResponsePublic {
 }
 
 export interface IAnalyticsPublic {
+
   _id: string;
   presentationId: string;
   sessionId: string;
@@ -107,7 +146,7 @@ export interface JoinSessionPayload {
 
 export interface SubmitVotePayload {
   slideId: string;
-  value: string | string[] | number;
+  value: string | string[] | number | Record<string, any>;
   participantToken: string;
 }
 

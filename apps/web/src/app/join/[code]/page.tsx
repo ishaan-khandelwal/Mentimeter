@@ -6,6 +6,7 @@ import { getSocket } from '@/lib/socket';
 import { getParticipantToken } from '@/lib/participant';
 import Link from 'next/link';
 import confetti from 'canvas-confetti';
+import { CHARACTERS, resolveCharacter } from '@/lib/characters';
 import type {
   GameState,
   QuestionTimerState,
@@ -13,7 +14,21 @@ import type {
   ParticipantScoreEvent,
 } from '@pollwave/shared';
 
-type SlideType = 'multiple_choice' | 'word_cloud' | 'open_text' | 'rating_scale' | 'ranking' | 'qa';
+type SlideType =
+  | 'multiple_choice'
+  | 'word_cloud'
+  | 'open_text'
+  | 'rating_scale'
+  | 'ranking'
+  | 'qa'
+  | 'scales'
+  | 'hundred_points'
+  | 'number'
+  | 'heading'
+  | 'paragraph'
+  | 'image'
+  | 'video'
+  | 'bullets';
 
 interface Slide {
   _id: string;
@@ -84,6 +99,10 @@ export default function AttendeeVotingPage() {
   const [qaQuestions, setQaQuestions] = useState<QAItem[]>([]);
   const [newQuestionText, setNewQuestionText] = useState('');
   const [upvotedQuestions, setUpvotedQuestions] = useState<Record<string, boolean>>({});
+  const [scalesInput, setScalesInput] = useState<Record<string, number>>({});
+  const [hundredPointsInput, setHundredPointsInput] = useState<Record<string, number>>({});
+  const [numberInput, setNumberInput] = useState<string>('');
+  const [announcementNotification, setAnnouncementNotification] = useState<string | null>(null);
 
   const participantToken = useMemo(() => {
     return typeof window !== 'undefined' ? getParticipantToken() : '';
@@ -254,12 +273,18 @@ export default function AttendeeVotingPage() {
     socket.on('connect', onConnect);
     socket.on('session_joined', onSessionJoined);
     socket.on('lobby_joined', onLobbyJoined);
+    const onAnnouncement = (data: { message: string }) => {
+      setAnnouncementNotification(data.message);
+      setTimeout(() => setAnnouncementNotification(null), 8000);
+    };
+
     socket.on('slide_changed', onSlideChanged);
     socket.on('voting_locked', onVotingLocked);
     socket.on('session_ended', onSessionEnded);
     socket.on('question_update', onQuestionUpdate);
     socket.on('game_state_changed', onGameStateChanged);
     socket.on('participant_score', onParticipantScore);
+    socket.on('announcement', onAnnouncement);
     socket.on('error', onError);
 
     if (socket.connected) {
@@ -276,6 +301,7 @@ export default function AttendeeVotingPage() {
       socket.off('question_update', onQuestionUpdate);
       socket.off('game_state_changed', onGameStateChanged);
       socket.off('participant_score', onParticipantScore);
+      socket.off('announcement', onAnnouncement);
       socket.off('error', onError);
     };
   }, [code, participantToken, nickname, avatar]);
@@ -412,12 +438,12 @@ export default function AttendeeVotingPage() {
 
   // Option colors for Kahoot / Mentimeter mobile buttons
   const optionColors = [
-    { bg: '#ef4444', text: '#ffffff', symbol: '▲' },
-    { bg: '#3b82f6', text: '#ffffff', symbol: '◆' },
-    { bg: '#f59e0b', text: '#ffffff', symbol: '●' },
-    { bg: '#10b981', text: '#ffffff', symbol: '■' },
-    { bg: '#8b5cf6', text: '#ffffff', symbol: '★' },
-    { bg: '#ec4899', text: '#ffffff', symbol: '✦' },
+    { bg: '#ef4444', text: '#fffaf3', symbol: '▲' },
+    { bg: '#d1912c', text: '#fffaf3', symbol: '◆' },
+    { bg: '#f59e0b', text: '#fffaf3', symbol: '●' },
+    { bg: '#2f8f6b', text: '#fffaf3', symbol: '■' },
+    { bg: '#b65f78', text: '#fffaf3', symbol: '★' },
+    { bg: '#ec4899', text: '#fffaf3', symbol: '✦' },
   ];
 
   if (status === 'connecting') {
@@ -470,51 +496,86 @@ export default function AttendeeVotingPage() {
     );
   }
 
-  // ─── STEP 1: Nickname & Emoji Avatar Picker ─────────────────────────────
+  // ─── STEP 1: Nickname & Avatar Selection Screen ─────────────────────────
   if (!hasJoinedLobby) {
+    const activeChar = resolveCharacter(avatar);
+
     return (
       <div className="attendee-screen" style={{ justifyContent: 'center', alignItems: 'center', padding: '24px' }}>
-        <div className="card" style={{ maxWidth: '420px', width: '100%', padding: '32px', textAlign: 'center' }}>
-          <div style={{ fontSize: '3rem', marginBottom: '8px' }}>{avatar}</div>
-          <h2 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '6px' }}>Choose Your Avatar</h2>
-          <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', marginBottom: '24px' }}>
-            Pick an emoji and nickname to enter the quiz room.
-          </p>
-
-          {/* Avatar selector pills */}
+        <div className="card" style={{ maxWidth: '480px', width: '100%', padding: '32px 24px', textAlign: 'center' }}>
           <div
             style={{
+              width: '84px',
+              height: '84px',
+              borderRadius: '50%',
+              background: activeChar.trackGradient,
               display: 'flex',
-              flexWrap: 'wrap',
+              alignItems: 'center',
               justifyContent: 'center',
-              gap: '10px',
-              marginBottom: '24px',
+              fontSize: '3rem',
+              margin: '0 auto 12px',
+              boxShadow: `0 0 28px ${activeChar.primaryColor}88`,
+              border: '3px solid #ffffff',
             }}
           >
-            {AVATAR_OPTIONS.map((em) => (
-              <button
-                key={em}
-                type="button"
-                onClick={() => setAvatar(em)}
-                style={{
-                  fontSize: '1.6rem',
-                  padding: '8px 12px',
-                  borderRadius: '12px',
-                  border: avatar === em ? '2px solid #7c5cfc' : '1px solid rgba(255, 255, 255, 0.1)',
-                  background: avatar === em ? 'rgba(124, 92, 252, 0.25)' : 'rgba(255, 255, 255, 0.05)',
-                  cursor: 'pointer',
-                  transform: avatar === em ? 'scale(1.15)' : 'scale(1)',
-                  transition: 'all 0.2s ease',
-                }}
-              >
-                {em}
-              </button>
-            ))}
+            {avatar}
+          </div>
+          <h2 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '4px' }}>Choose Your Racing Hero</h2>
+          <span style={{ fontSize: '0.85rem', color: activeChar.primaryColor, fontWeight: 700, display: 'block', marginBottom: '18px' }}>
+            ⚡ {activeChar.name} — {activeChar.title}
+          </span>
+
+          {/* Character selection cards grid */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(4, 1fr)',
+              gap: '10px',
+              marginBottom: '24px',
+              maxHeight: '210px',
+              overflowY: 'auto',
+              padding: '6px',
+            }}
+          >
+            {CHARACTERS.map((char) => {
+              const isSelected = avatar === char.emoji;
+              return (
+                <button
+                  key={char.id}
+                  type="button"
+                  onClick={() => {
+                    setAvatar(char.emoji);
+                    if (!nickname || CHARACTERS.some((c) => c.name === nickname)) {
+                      setNickname(char.name);
+                    }
+                  }}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: '4px',
+                    padding: '10px 6px',
+                    borderRadius: '14px',
+                    border: isSelected ? `2.5px solid ${char.primaryColor}` : '1px solid rgba(255, 255, 255, 0.1)',
+                    background: isSelected ? char.badgeBg : 'rgba(255, 255, 255, 0.03)',
+                    boxShadow: isSelected ? `0 0 16px ${char.primaryColor}55` : 'none',
+                    cursor: 'pointer',
+                    transform: isSelected ? 'scale(1.06)' : 'scale(1)',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  <span style={{ fontSize: '1.8rem' }}>{char.emoji}</span>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 800, color: isSelected ? '#ffffff' : 'var(--color-text-secondary)' }}>
+                    {char.name}
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
           <form onSubmit={handleJoinLobby}>
             <div className="form-group" style={{ marginBottom: '20px' }}>
-              <label className="form-label" style={{ textAlign: 'left' }}>Your Nickname</label>
+              <label className="form-label" style={{ textAlign: 'left' }}>Your Racer Nickname</label>
               <input
                 type="text"
                 value={nickname}
@@ -528,7 +589,7 @@ export default function AttendeeVotingPage() {
             </div>
 
             <button type="submit" className="btn btn--primary btn--full" style={{ padding: '14px', fontSize: '1.1rem', fontWeight: 800 }}>
-              Join Game ➔
+              Join Quiz Sprint ➔
             </button>
           </form>
         </div>
@@ -538,45 +599,52 @@ export default function AttendeeVotingPage() {
 
   // ─── STEP 2: Waiting Room Lobby Screen ──────────────────────────────────
   if (gameState === 'LOBBY') {
+    const activeChar = resolveCharacter(avatar);
+
     return (
       <div className="attendee-screen" style={{ justifyContent: 'center', alignItems: 'center', padding: '24px' }}>
-        <div className="card" style={{ maxWidth: '420px', width: '100%', padding: '36px', textAlign: 'center' }}>
+        <div className="card" style={{ maxWidth: '440px', width: '100%', padding: '36px 24px', textAlign: 'center' }}>
           <div
             style={{
               width: '100px',
               height: '100px',
               borderRadius: '50%',
-              background: 'linear-gradient(135deg, rgba(124, 92, 252, 0.3) 0%, rgba(236, 72, 153, 0.3) 100%)',
-              border: '3px solid #7c5cfc',
+              background: activeChar.trackGradient,
+              border: `3px solid ${activeChar.primaryColor}`,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: '3.5rem',
+              fontSize: '3.6rem',
               margin: '0 auto 20px',
-              boxShadow: '0 0 30px rgba(124, 92, 252, 0.4)',
+              boxShadow: `0 0 35px ${activeChar.primaryColor}88`,
             }}
           >
             {avatar}
           </div>
 
-          <h2 style={{ fontSize: '1.7rem', fontWeight: 800, marginBottom: '6px' }}>{nickname}</h2>
+          <h2 style={{ fontSize: '1.7rem', fontWeight: 800, marginBottom: '4px' }}>{nickname}</h2>
+          <div style={{ color: activeChar.primaryColor, fontWeight: 700, fontSize: '0.9rem', marginBottom: '14px' }}>
+            ⚡ {activeChar.name} — {activeChar.title}
+          </div>
+
           <div
             style={{
               display: 'inline-block',
-              padding: '4px 14px',
+              padding: '4px 16px',
               borderRadius: '100px',
               background: 'rgba(34, 197, 94, 0.2)',
               color: '#4ade80',
+              border: '1px solid rgba(34, 197, 94, 0.35)',
               fontWeight: 800,
               fontSize: '0.85rem',
               marginBottom: '20px',
             }}
           >
-            ✓ YOU&apos;RE IN THE LOBBY
+            🏁 READY AT THE STARTING LINE
           </div>
 
-          <p style={{ color: 'var(--color-text-secondary)', fontSize: '1rem', lineHeight: 1.5, marginBottom: '24px' }}>
-            Look at the host screen! The quiz will begin as soon as the presenter starts it.
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.95rem', lineHeight: 1.5, marginBottom: '24px' }}>
+            Look up at the presenter&apos;s stadium screen! The race will begin as soon as the quiz is launched.
           </p>
 
           <div
@@ -589,7 +657,7 @@ export default function AttendeeVotingPage() {
               fontSize: '0.85rem',
             }}
           >
-            <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: '#22c55e' }} />
+            <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: '#3f9a73' }} />
             Ready for Question 1
           </div>
         </div>
@@ -607,13 +675,13 @@ export default function AttendeeVotingPage() {
               width: '140px',
               height: '140px',
               borderRadius: '50%',
-              background: 'linear-gradient(135deg, #ec4899 0%, #7c5cfc 100%)',
+              background: 'linear-gradient(135deg, #ec4899 0%, #d95745 100%)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               fontSize: '5rem',
               fontWeight: 900,
-              color: '#ffffff',
+              color: '#fffaf3',
               boxShadow: '0 0 50px rgba(236, 72, 153, 0.5)',
               margin: '0 auto 24px',
             }}
@@ -642,7 +710,7 @@ export default function AttendeeVotingPage() {
             width: '100%',
             padding: '36px',
             textAlign: 'center',
-            border: isCorrect ? '2px solid #22c55e' : '2px solid #ef4444',
+            border: isCorrect ? '2px solid #3f9a73' : '2px solid #ef4444',
             background: isCorrect ? 'rgba(34, 197, 94, 0.08)' : 'rgba(239, 68, 68, 0.08)',
           }}
         >
@@ -650,7 +718,7 @@ export default function AttendeeVotingPage() {
             {isCorrect ? '🎉' : '❌'}
           </div>
 
-          <h2 style={{ fontSize: '2rem', fontWeight: 900, color: isCorrect ? '#4ade80' : '#f87171', marginBottom: '6px' }}>
+          <h2 style={{ fontSize: '2rem', fontWeight: 900, color: isCorrect ? '#2f8f6b' : '#f87171', marginBottom: '6px' }}>
             {isCorrect ? 'CORRECT!' : 'NOT QUITE!'}
           </h2>
 
@@ -660,7 +728,7 @@ export default function AttendeeVotingPage() {
                 style={{
                   fontSize: '2.5rem',
                   fontWeight: 900,
-                  color: '#ffffff',
+                  color: '#fffaf3',
                 }}
               >
                 +{participantScore?.pointsEarned || 0} pts
@@ -672,7 +740,7 @@ export default function AttendeeVotingPage() {
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: '6px',
-                    color: '#38bdf8',
+                    color: '#2f8f6b',
                     fontWeight: 700,
                     fontSize: '0.9rem',
                     background: 'rgba(56, 189, 248, 0.12)',
@@ -701,7 +769,7 @@ export default function AttendeeVotingPage() {
           {(revealData?.correctAnswer || activeSlide?.config?.correctAnswer) && (
             <div
               style={{
-                background: 'rgba(255, 255, 255, 0.04)',
+                background: 'rgba(92, 54, 73, 0.06)',
                 borderRadius: '12px',
                 padding: '12px',
                 marginBottom: '20px',
@@ -709,7 +777,7 @@ export default function AttendeeVotingPage() {
               }}
             >
               <span style={{ color: 'var(--color-text-muted)' }}>Correct Answer: </span>
-              <strong style={{ color: '#4ade80' }}>
+              <strong style={{ color: '#2f8f6b' }}>
                 {(() => {
                   const ans = revealData?.correctAnswer ?? activeSlide?.config?.correctAnswer;
                   return Array.isArray(ans) ? ans.join(', ') : ans;
@@ -722,7 +790,7 @@ export default function AttendeeVotingPage() {
             style={{
               display: 'flex',
               justifyContent: 'space-around',
-              background: 'rgba(255, 255, 255, 0.04)',
+              background: 'rgba(92, 54, 73, 0.06)',
               borderRadius: '14px',
               padding: '14px',
             }}
@@ -758,15 +826,15 @@ export default function AttendeeVotingPage() {
 
           <div
             style={{
-              background: 'rgba(255, 255, 255, 0.05)',
+              background: 'rgba(92, 54, 73, 0.07)',
               borderRadius: '16px',
               padding: '20px',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
+              border: '1px solid rgba(92, 54, 73, 0.12)',
               marginBottom: '24px',
             }}
           >
             <div style={{ fontSize: '2.5rem', marginBottom: '4px' }}>{avatar}</div>
-            <div style={{ fontSize: '1.3rem', fontWeight: 800, color: '#ffffff' }}>{nickname}</div>
+            <div style={{ fontSize: '1.3rem', fontWeight: 800, color: '#fffaf3' }}>{nickname}</div>
             <div style={{ fontSize: '2.2rem', fontWeight: 900, color: '#fbbf24', marginTop: '10px' }}>
               Rank #{participantScore?.rank || '-'}
             </div>
@@ -774,7 +842,7 @@ export default function AttendeeVotingPage() {
               {participantScore?.totalScore?.toLocaleString() || 0} total points
             </div>
             {(participantScore?.pointsEarned || 0) > 0 && (
-              <div style={{ color: '#4ade80', fontWeight: 700, fontSize: '0.9rem', marginTop: '6px' }}>
+              <div style={{ color: '#2f8f6b', fontWeight: 700, fontSize: '0.9rem', marginTop: '6px' }}>
                 +{participantScore?.pointsEarned} pts this round
                 {participantScore?.timeTaken ? ` (⚡ ${participantScore.timeTaken}s)` : ''}
               </div>
@@ -800,7 +868,7 @@ export default function AttendeeVotingPage() {
             width: '100%',
             padding: '40px',
             textAlign: 'center',
-            background: 'linear-gradient(180deg, rgba(245, 158, 11, 0.15) 0%, rgba(13, 13, 26, 0.95) 100%)',
+            background: 'linear-gradient(180deg, rgba(245, 158, 11, 0.15) 0%, rgba(251, 247, 240, 0.95) 100%)',
             border: '2px solid rgba(245, 158, 11, 0.4)',
           }}
         >
@@ -814,7 +882,7 @@ export default function AttendeeVotingPage() {
 
           <div
             style={{
-              background: 'rgba(255, 255, 255, 0.05)',
+              background: 'rgba(92, 54, 73, 0.07)',
               borderRadius: '20px',
               padding: '24px',
               marginBottom: '28px',
@@ -825,7 +893,7 @@ export default function AttendeeVotingPage() {
             <div style={{ fontSize: '3rem', fontWeight: 900, color: '#fbbf24', margin: '8px 0' }}>
               #{participantScore?.rank || 1}
             </div>
-            <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#ffffff' }}>
+            <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#fffaf3' }}>
               {participantScore?.totalScore?.toLocaleString() || 0} Points
             </div>
           </div>
@@ -843,6 +911,11 @@ export default function AttendeeVotingPage() {
 
   return (
     <div className="attendee-screen">
+      {announcementNotification && (
+        <div style={{ background: 'linear-gradient(90deg, #d95745, #d1912c)', color: '#fffaf3', padding: '12px 20px', textAlign: 'center', fontWeight: 700, fontSize: '0.95rem', boxShadow: '0 4px 12px rgba(63,41,64,0.3)', zIndex: 100 }}>
+          📢 {announcementNotification}
+        </div>
+      )}
       {/* Top Header */}
       <header className="attendee-header" style={{ justifyContent: 'space-between', padding: '12px 20px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -856,9 +929,9 @@ export default function AttendeeVotingPage() {
             style={{
               padding: '4px 12px',
               borderRadius: '100px',
-              background: remainingTime <= 5 ? 'rgba(239, 68, 68, 0.2)' : 'rgba(124, 92, 252, 0.2)',
-              border: remainingTime <= 5 ? '1px solid #ef4444' : '1px solid #7c5cfc',
-              color: remainingTime <= 5 ? '#f87171' : '#c4b5fd',
+              background: remainingTime <= 5 ? 'rgba(239, 68, 68, 0.2)' : 'rgba(217, 87, 69, 0.2)',
+              border: remainingTime <= 5 ? '1px solid #ef4444' : '1px solid #d95745',
+              color: remainingTime <= 5 ? '#f87171' : '#9c4f73',
               fontWeight: 800,
               fontSize: '0.85rem',
             }}
@@ -918,11 +991,11 @@ export default function AttendeeVotingPage() {
                     }}
                   >
                     <div style={{ fontSize: '3rem', marginBottom: '12px' }}>✓</div>
-                    <h3 style={{ fontSize: '1.4rem', fontWeight: 800, color: '#4ade80', marginBottom: '8px' }}>
+                    <h3 style={{ fontSize: '1.4rem', fontWeight: 800, color: '#2f8f6b', marginBottom: '8px' }}>
                       Answer Submitted!
                     </h3>
                     <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.95rem' }}>
-                      You selected: <strong style={{ color: '#ffffff' }}>{mySubmittedAnswer}</strong>
+                      You selected: <strong style={{ color: '#fffaf3' }}>{mySubmittedAnswer}</strong>
                     </p>
                     <p style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem', marginTop: '12px' }}>
                       Waiting for presenter to reveal correct answer...
@@ -951,7 +1024,7 @@ export default function AttendeeVotingPage() {
                             fontSize: '1.25rem',
                             fontWeight: 800,
                             cursor: 'pointer',
-                            boxShadow: '0 6px 20px rgba(0,0,0,0.25)',
+                            boxShadow: '0 6px 20px rgba(63,41,64,0.25)',
                             transition: 'transform 0.15s ease, filter 0.15s ease',
                             opacity: votingLocked || gameState === 'QUESTION_LOCKED' ? 0.6 : 1,
                             textAlign: 'left',
@@ -962,7 +1035,7 @@ export default function AttendeeVotingPage() {
                               width: '36px',
                               height: '36px',
                               borderRadius: '8px',
-                              background: 'rgba(0,0,0,0.2)',
+                              background: 'rgba(63,41,64,0.2)',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
@@ -1125,6 +1198,210 @@ export default function AttendeeVotingPage() {
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Scales (Likert statement rating matrix) */}
+            {activeSlide.type === 'scales' && (
+              <div>
+                {hasVotedCurrent ? (
+                  <div className="card page-enter" style={{ padding: '36px', textAlign: 'center', background: 'rgba(34, 197, 94, 0.1)', border: '2px solid rgba(34, 197, 94, 0.4)' }}>
+                    <div style={{ fontSize: '3rem', marginBottom: '8px' }}>✓</div>
+                    <h3 style={{ fontSize: '1.3rem', fontWeight: 800, color: '#2f8f6b' }}>Ratings Submitted!</h3>
+                    <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', marginTop: '6px' }}>Thanks for sharing your opinion.</p>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    {(activeSlide.options || []).map((statement) => {
+                      const currentVal = scalesInput[statement] || 3;
+                      return (
+                        <div key={statement} className="card" style={{ padding: '16px' }}>
+                          <div style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: '12px' }}>{statement}</div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px' }}>
+                            {[1, 2, 3, 4, 5].map((val) => (
+                              <button
+                                key={val}
+                                type="button"
+                                onClick={() => setScalesInput((prev) => ({ ...prev, [statement]: val }))}
+                                disabled={votingLocked}
+                                style={{
+                                  flex: 1,
+                                  padding: '10px 0',
+                                  borderRadius: '8px',
+                                  background: currentVal === val ? '#d95745' : 'rgba(92, 54, 73, 0.07)',
+                                  border: currentVal === val ? '2px solid #b65f78' : '1px solid var(--color-border)',
+                                  color: currentVal === val ? '#fffaf3' : 'var(--color-text-secondary)',
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                {val}
+                              </button>
+                            ))}
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '6px' }}>
+                            <span>{activeSlide.config?.lowLabel || 'Disagree'}</span>
+                            <span>{activeSlide.config?.highLabel || 'Agree'}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!currentSlideId || votingLocked) return;
+                        submitVote(scalesInput as any);
+                      }}
+                      disabled={votingLocked}
+                      className="btn btn--primary btn--full"
+                    >
+                      Submit Ratings
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 100 Points Allocation */}
+            {activeSlide.type === 'hundred_points' && (() => {
+              const totalAllocated = Object.values(hundredPointsInput).reduce((a, b) => a + (Number(b) || 0), 0);
+              return (
+                <div>
+                  {hasVotedCurrent ? (
+                    <div className="card page-enter" style={{ padding: '36px', textAlign: 'center', background: 'rgba(34, 197, 94, 0.1)', border: '2px solid rgba(34, 197, 94, 0.4)' }}>
+                      <div style={{ fontSize: '3rem', marginBottom: '8px' }}>✓</div>
+                      <h3 style={{ fontSize: '1.3rem', fontWeight: 800, color: '#2f8f6b' }}>100 Points Allocated!</h3>
+                      <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', marginTop: '6px' }}>Your priorities have been submitted.</p>
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', fontWeight: 700 }}>
+                        <span>Points Remaining:</span>
+                        <span style={{ color: totalAllocated === 100 ? '#2f8f6b' : totalAllocated > 100 ? '#ef4444' : '#fbbf24' }}>
+                          {100 - totalAllocated} pts
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '24px' }}>
+                        {(activeSlide.options || []).map((opt) => {
+                          const pts = hundredPointsInput[opt] || 0;
+                          return (
+                            <div key={opt} className="card" style={{ padding: '16px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '0.92rem', fontWeight: 600 }}>
+                                <span>{opt}</span>
+                                <span style={{ color: '#2f8f6b' }}>{pts} pts</span>
+                              </div>
+                              <input
+                                type="range"
+                                min={0}
+                                max={100}
+                                step={5}
+                                value={pts}
+                                onChange={(e) => setHundredPointsInput((prev) => ({ ...prev, [opt]: Number(e.target.value) }))}
+                                style={{ width: '100%', accentColor: '#d95745' }}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!currentSlideId || votingLocked) return;
+                          submitVote(hundredPointsInput as any);
+                        }}
+                        disabled={votingLocked}
+                        className="btn btn--primary btn--full"
+                      >
+                        Submit 100 Points Allocation
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Number Input Slide */}
+            {activeSlide.type === 'number' && (
+              <div>
+                {hasVotedCurrent ? (
+                  <div className="card page-enter" style={{ padding: '36px', textAlign: 'center', background: 'rgba(34, 197, 94, 0.1)', border: '2px solid rgba(34, 197, 94, 0.4)' }}>
+                    <div style={{ fontSize: '3rem', marginBottom: '8px' }}>✓</div>
+                    <h3 style={{ fontSize: '1.3rem', fontWeight: 800, color: '#2f8f6b' }}>Number Submitted!</h3>
+                    <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', marginTop: '6px' }}>Your guess: {numberInput}</p>
+                  </div>
+                ) : (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!currentSlideId || votingLocked || !numberInput) return;
+                      submitVote(Number(numberInput));
+                    }}
+                    style={{ textAlign: 'center' }}
+                  >
+                    <input
+                      type="number"
+                      value={numberInput}
+                      onChange={(e) => setNumberInput(e.target.value)}
+                      placeholder="0"
+                      className="number-input-large"
+                      style={{ marginBottom: '20px' }}
+                      autoFocus
+                      required
+                    />
+                    <button type="submit" disabled={votingLocked || !numberInput} className="btn btn--primary btn--full">
+                      Submit Number
+                    </button>
+                  </form>
+                )}
+              </div>
+            )}
+
+            {/* Content Slide (Heading/Paragraph/Image/Video/Bullets) */}
+            {(activeSlide.type === 'heading' || activeSlide.type === 'paragraph' || activeSlide.type === 'image' || activeSlide.type === 'video' || activeSlide.type === 'bullets') && (
+              <div className="card" style={{ padding: '32px 24px', textAlign: 'center' }}>
+                <span className="badge badge--draft" style={{ marginBottom: '16px' }}>
+                  👀 Presenter is sharing content
+                </span>
+                {activeSlide.type === 'heading' && (
+                  <div>
+                    <h2 style={{ fontSize: '1.8rem', fontWeight: 800, marginBottom: '12px' }}>{activeSlide.question}</h2>
+                    {activeSlide.config?.subtitle && <p style={{ color: 'var(--color-text-secondary)' }}>{activeSlide.config.subtitle}</p>}
+                  </div>
+                )}
+                {activeSlide.type === 'paragraph' && (
+                  <div>
+                    <h3 style={{ fontSize: '1.4rem', fontWeight: 700, marginBottom: '12px' }}>{activeSlide.question}</h3>
+                    <p style={{ color: 'var(--color-text-secondary)', lineHeight: 1.6, textAlign: 'left', whiteSpace: 'pre-wrap' }}>{activeSlide.config?.body}</p>
+                  </div>
+                )}
+                {activeSlide.type === 'image' && (
+                  <div>
+                    {activeSlide.config?.imageUrl && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={activeSlide.config.imageUrl} alt={activeSlide.question} style={{ maxWidth: '100%', borderRadius: '12px', marginBottom: '12px' }} />
+                    )}
+                    {activeSlide.config?.caption && <p style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>{activeSlide.config.caption}</p>}
+                  </div>
+                )}
+                {activeSlide.type === 'video' && (
+                  <div>
+                    {activeSlide.config?.videoUrl && (
+                      <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0, overflow: 'hidden', borderRadius: '12px' }}>
+                        <iframe src={activeSlide.config.videoUrl.replace('watch?v=', 'embed/')} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }} allowFullScreen />
+                      </div>
+                    )}
+                  </div>
+                )}
+                {activeSlide.type === 'bullets' && (
+                  <div style={{ textAlign: 'left', display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '12px' }}>
+                    {(activeSlide.options || []).map((b, i) => (
+                      <div key={i} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                        <span style={{ color: '#b65f78' }}>✦</span>
+                        <span>{b}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>

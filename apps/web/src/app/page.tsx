@@ -2,83 +2,141 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'PollWave — Live Polling & Presentations',
+  title: 'PollWave - Interactive Presentation & Live Audience Engagement Tool',
+  description:
+    'Create responsive live presentations with polls, word clouds, Q&A, quizzes, and real-time audience feedback.',
 };
+
+const slideTypes = [
+  { label: 'Polls', detail: 'Multiple choice with live animated results.' },
+  { label: 'Word clouds', detail: 'Turn open responses into instant patterns.' },
+  { label: 'Q&A', detail: 'Collect, upvote, and answer audience questions.' },
+  { label: 'Ranking', detail: 'Let participants prioritize what matters.' },
+  { label: 'Scales', detail: 'Measure agreement, confidence, and sentiment.' },
+  { label: 'Quizzes', detail: 'Run quick checks with visible momentum.' },
+];
+
+const workflow = [
+  { step: '01', title: 'Build the moment', text: 'Start from a blank deck or a ready template and add interaction where discussion usually drops.' },
+  { step: '02', title: 'Invite the room', text: 'Share one short code. People answer from any device while your screen updates live.' },
+  { step: '03', title: 'Read the signal', text: 'Export responses, spot trends, and use AI summaries to turn feedback into decisions.' },
+];
 
 export default function HomePage() {
   return (
-    <div className="page-container page-enter">
-      {/* ── Hero ── */}
-      <section style={{ padding: '100px 24px 80px', textAlign: 'center', position: 'relative' }}>
-        <div className="container container--narrow">
-          <div style={{ marginBottom: 24 }}>
-            <span className="badge badge--live" style={{ fontSize: '0.8rem' }}>
-              Real-time · Zero Setup · No Participant Limits
-            </span>
-          </div>
+    <div className="home-shell page-enter">
+      <section className="home-hero">
+        <div className="home-hero__ambient" aria-hidden="true" />
 
-          <h1 style={{ marginBottom: 24 }}>
-            Turn Every Presentation Into a{' '}
-            <span className="text-gradient">Live Conversation</span>
-          </h1>
-
-          <p style={{ fontSize: '1.15rem', marginBottom: 40, maxWidth: 560, margin: '0 auto 40px' }}>
-            PollWave lets you build interactive slide decks with live polls, word clouds,
-            Q&A sessions, and more. Powered by AI. Built for scale.
+        <div className="home-hero__content">
+          <p className="home-eyebrow">Live polls, questions, quizzes, and feedback</p>
+          <h1>PollWave makes every room answer back.</h1>
+          <p className="home-hero__copy">
+            Create beautiful interactive presentations that work on every screen, update in real time,
+            and keep your audience part of the conversation.
           </p>
 
-          <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <div className="home-actions" aria-label="Primary actions">
             <Link href="/signup" className="btn btn--primary btn--lg">
-              Start for Free
+              Start free
             </Link>
-            <Link href="/join" className="btn btn--ghost btn--lg">
-              Join a Session
+            <Link href="/join" className="btn btn--secondary btn--lg">
+              Join a session
             </Link>
           </div>
+
+          <dl className="home-proof">
+            <div>
+              <dt>8+</dt>
+              <dd>interaction types</dd>
+            </div>
+            <div>
+              <dt>Live</dt>
+              <dd>audience results</dd>
+            </div>
+            <div>
+              <dt>AI</dt>
+              <dd>question help</dd>
+            </div>
+          </dl>
         </div>
-      </section>
 
-      {/* ── Feature Grid ── */}
-      <section style={{ padding: '60px 24px 100px' }}>
-        <div className="container">
-          <h2 style={{ textAlign: 'center', marginBottom: 48 }}>
-            Everything you need to{' '}
-            <span className="text-gradient">engage your audience</span>
-          </h2>
+        <div className="live-preview" aria-label="Live presentation preview">
+          <div className="live-preview__topbar">
+            <span>PollWave Live</span>
+            <strong>Code 849201</strong>
+          </div>
+          <div className="live-preview__stage">
+            <div className="live-preview__status">
+              <span className="live-dot" aria-hidden="true" />
+              142 voters connected
+            </div>
+            <h2>What should we prioritize next quarter?</h2>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
-            {features.map((f) => (
-              <div key={f.title} className="card card--hover card--glow" style={{ padding: '28px 24px' }}>
-                <div style={{ fontSize: '2rem', marginBottom: 12 }}>{f.icon}</div>
-                <h3 style={{ marginBottom: 8, fontSize: '1.05rem' }}>{f.title}</h3>
-                <p style={{ fontSize: '0.88rem', lineHeight: 1.6 }}>{f.desc}</p>
+            <div className="result-list">
+              <div className="result-row result-row--first">
+                <span>AI assistant features</span>
+                <strong>58%</strong>
+                <div><span /></div>
               </div>
-            ))}
+              <div className="result-row result-row--second">
+                <span>Performance and speed</span>
+                <strong>26%</strong>
+                <div><span /></div>
+              </div>
+              <div className="result-row result-row--third">
+                <span>New themes and branding</span>
+                <strong>16%</strong>
+                <div><span /></div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* ── CTA ── */}
-      <section style={{ padding: '80px 24px', textAlign: 'center', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-        <div className="container container--narrow">
-          <h2 style={{ marginBottom: 16 }}>Ready to wow your audience?</h2>
-          <p style={{ marginBottom: 32 }}>Free forever for unlimited audiences. No credit card required.</p>
-          <Link href="/signup" className="btn btn--primary btn--lg">
-            Create Your First Presentation
-          </Link>
+      <section className="home-section home-section--split">
+        <div>
+          <p className="home-eyebrow">Everything presenters need</p>
+          <h2>One deck can teach, vote, debate, and decide.</h2>
         </div>
+        <p>
+          PollWave keeps the slide experience clean while giving facilitators the controls needed
+          for workshops, classes, town halls, and product reviews.
+        </p>
+      </section>
+
+      <section className="slide-grid" aria-label="PollWave interaction types">
+        {slideTypes.map((item) => (
+          <article className="slide-tile" key={item.label}>
+            <h3>{item.label}</h3>
+            <p>{item.detail}</p>
+          </article>
+        ))}
+      </section>
+
+      <section className="workflow-section">
+        <div className="workflow-section__intro">
+          <p className="home-eyebrow">Simple workflow</p>
+          <h2>From idea to audience signal in minutes.</h2>
+        </div>
+        <div className="workflow-list">
+          {workflow.map((item) => (
+            <article className="workflow-item" key={item.step}>
+              <span>{item.step}</span>
+              <h3>{item.title}</h3>
+              <p>{item.text}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="home-cta">
+        <p className="home-eyebrow">Ready when the room is</p>
+        <h2>Build your first interactive presentation today.</h2>
+        <Link href="/signup" className="btn btn--primary btn--lg">
+          Create a presentation
+        </Link>
       </section>
     </div>
   );
 }
-
-const features = [
-  { icon: '📊', title: 'Multiple Choice', desc: 'Create engaging polls with live animated bar charts that update as votes pour in.' },
-  { icon: '☁️', title: 'Word Cloud', desc: 'Collect open responses and watch a dynamic word cloud grow in real time.' },
-  { icon: '💬', title: 'Open Text', desc: 'Gather qualitative responses and use AI to instantly identify themes.' },
-  { icon: '⭐', title: 'Rating Scale', desc: 'Measure sentiment on a 1–10 scale with a beautiful distribution histogram.' },
-  { icon: '🏆', title: 'Ranking', desc: 'Let your audience drag-and-rank options. Results show weighted scores live.' },
-  { icon: '🙋', title: 'Live Q&A', desc: 'Attendees submit and upvote questions. Best questions rise to the top.' },
-  { icon: '🤖', title: 'AI-Powered', desc: 'Generate slide questions from any topic with Claude AI in seconds.' },
-  { icon: '⚡', title: 'Built for Scale', desc: 'Redis-backed, horizontally scalable. Tested for 500+ concurrent voters.' },
-];
