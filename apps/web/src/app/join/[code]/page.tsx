@@ -398,25 +398,6 @@ export default function AttendeeVotingPage() {
     };
   }, [code, participantToken, nickname, avatar, gameState]);
 
-  // Local Countdown Fallback (guarantees transition to question even if socket is delayed)
-  useEffect(() => {
-    if (gameState !== 'COUNTDOWN') return;
-
-    const timer = setInterval(() => {
-      setCountdownNumber((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          setGameState('QUESTION_ACTIVE');
-          setRemainingTime(activeSlide?.config?.durationSeconds || 20);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [gameState, activeSlide]);
-
   // Question timer countdown effect
   useEffect(() => {
     if (gameState !== 'QUESTION_ACTIVE' || !timerState) return;

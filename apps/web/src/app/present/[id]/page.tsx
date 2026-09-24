@@ -369,25 +369,6 @@ export default function PresenterLivePage() {
   const currentIndex = slides.findIndex((s) => s._id === currentSlideId);
   const activeSlide = slides[currentIndex] || slides[0] || null;
 
-  // Local countdown fallback when in COUNTDOWN state
-  useEffect(() => {
-    if (gameState !== 'COUNTDOWN') return;
-
-    const timer = setInterval(() => {
-      setCountdownNumber((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          setGameState('QUESTION_ACTIVE');
-          setRemainingTime((activeSlide?.config as any)?.durationSeconds || 20);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [gameState, activeSlide]);
-
   // Live REST tallies & answered counts sync (backup to WebSockets)
   useEffect(() => {
     if (!id || (gameState !== 'QUESTION_ACTIVE' && gameState !== 'QUESTION_LOCKED' && gameState !== 'REVEAL')) return;
