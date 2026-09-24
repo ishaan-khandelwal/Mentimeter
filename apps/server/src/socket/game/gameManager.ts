@@ -144,6 +144,7 @@ export class GameManager {
     if (existing) {
       existing.nickname = participant.nickname || existing.nickname;
       existing.avatar = participant.avatar || existing.avatar;
+      existing.online = true; // covers rejoin/reconnect after a disconnect
     } else {
       const newParticipant: GameParticipant = {
         token: participant.token,
@@ -157,11 +158,25 @@ export class GameManager {
         totalTimeTaken: 0,
         rank: session.participants.size + 1,
         previousRank: session.participants.size + 1,
+        online: true,
       };
       session.participants.set(participant.token, newParticipant);
     }
 
     return this.getLobbyList(sessionId);
+  }
+
+  /**
+   * Marks a participant as disconnected. They stay in the roster (so their
+   * score survives for the leaderboard/final results if they reconnect or
+   * the round already counted them), but drop out of the live "attending"
+   * roster and the answered/total denominator.
+   */
+  public setParticipantOffline(sessionId: string, token: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    const participant = session.participants.get(token);
+    if (participant) participant.online = false;
   }
 
   public getLobbyList(sessionId: string): {
@@ -171,11 +186,13 @@ export class GameManager {
     const session = this.sessions.get(sessionId);
     if (!session) return { participants: [], count: 0 };
 
-    const list = Array.from(session.participants.values()).map((p) => ({
-      token: p.token,
-      nickname: p.nickname,
-      avatar: p.avatar,
-    }));
+    const list = Array.from(session.participants.values())
+      .filter((p) => p.online)
+      .map((p) => ({
+        token: p.token,
+        nickname: p.nickname,
+        avatar: p.avatar,
+      }));
 
     return { participants: list, count: list.length };
   }
@@ -393,8 +410,12 @@ export class GameManager {
         totalTimeTaken: 0,
         rank: session.participants.size + 1,
         previousRank: session.participants.size + 1,
+        online: true,
       };
       session.participants.set(participantToken, participant);
+    } else if (!participant.online) {
+      // Voting inherently means they have a live connection right now.
+      participant.online = true;
     }
 
     let points = 0;
@@ -429,8 +450,10 @@ export class GameManager {
     // Recalculate ranks across participants
     this.updateRankings(sessionId);
 
-    // Check early lock condition: 100% of participants have answered
-    const totalParticipants = session.participants.size;
+    // Check early lock condition: 100% of currently-connected participants have
+    // answered. Uses the online count, not everyone who ever joined, so a
+    // student who left mid-quiz doesn't permanently block the early lock.
+    const totalParticipants = Array.from(session.participants.values()).filter((p) => p.online).length;
     const answeredCount = session.answeredParticipants.size;
     const shouldLockEarly = totalParticipants > 0 && answeredCount >= totalParticipants;
 

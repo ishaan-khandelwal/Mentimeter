@@ -255,6 +255,8 @@ export interface GameParticipant {
   totalTimeTaken: number;
   rank: number;
   previousRank: number;
+  /** Whether this participant currently has a live socket connection. */
+  online: boolean;
 }
 
 export interface LeaderboardEntry {

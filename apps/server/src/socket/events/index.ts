@@ -723,6 +723,15 @@ export function registerSocketHandlers(io: IOServer): void {
       } else {
         // Decrement attendee presence
         await decrementPresence(io, sessionId);
+
+        // Drop them from the live "attending" roster the presenter sees.
+        // They stay in gameManager's participant map (score/history intact
+        // for the leaderboard/final results) — only the online flag flips.
+        if (data.participantToken) {
+          gameManager.setParticipantOffline(sessionId, data.participantToken);
+          const lobbyData = gameManager.getLobbyList(sessionId);
+          io.to(`session:${sessionId}`).emit('lobby_update', lobbyData);
+        }
       }
 
       console.log(`[Socket] Disconnected: ${socket.id}`);
