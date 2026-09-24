@@ -104,6 +104,7 @@ export default function AttendeeVotingPage() {
   }, [currentSlideId]);
 
   const activeSlide = slides.find((s) => s._id === currentSlideId) || null;
+  const activeSlideNumber = slides.findIndex((s) => s._id === currentSlideId) + 1;
 
   // Initialize ranking options when active slide changes
   useEffect(() => {
@@ -531,16 +532,6 @@ export default function AttendeeVotingPage() {
     );
   };
 
-  // Option colors for Kahoot / Mentimeter mobile buttons
-  const optionColors = [
-    { bg: '#ef4444', text: '#fffaf3', symbol: '▲' },
-    { bg: '#d1912c', text: '#fffaf3', symbol: '◆' },
-    { bg: '#f59e0b', text: '#fffaf3', symbol: '●' },
-    { bg: '#2f8f6b', text: '#fffaf3', symbol: '■' },
-    { bg: '#b65f78', text: '#fffaf3', symbol: '★' },
-    { bg: '#ec4899', text: '#fffaf3', symbol: '✦' },
-  ];
-
   if (status === 'connecting') {
     return (
       <div className="attendee-screen" style={{ justifyContent: 'center', alignItems: 'center' }}>
@@ -771,6 +762,11 @@ export default function AttendeeVotingPage() {
     return (
       <div className="attendee-screen" style={{ justifyContent: 'center', alignItems: 'center', padding: '24px' }}>
         <div style={{ textAlign: 'center', maxWidth: '480px', width: '100%' }}>
+          {activeSlideNumber > 0 && (
+            <div style={{ fontSize: '0.8rem', fontWeight: 700, letterSpacing: '0.05em', color: 'var(--color-text-muted)', marginBottom: '8px' }}>
+              QUESTION {activeSlideNumber} OF {slides.length}
+            </div>
+          )}
           {activeSlide?.question && (
             <h1
               style={{
@@ -1079,6 +1075,11 @@ export default function AttendeeVotingPage() {
 
         {activeSlide ? (
           <div style={{ width: '100%', maxWidth: '520px', margin: '0 auto' }}>
+            {activeSlideNumber > 0 && (
+              <div style={{ textAlign: 'center', fontSize: '0.8rem', fontWeight: 700, letterSpacing: '0.05em', color: 'var(--color-text-muted)', marginBottom: '8px' }}>
+                QUESTION {activeSlideNumber} OF {slides.length}
+              </div>
+            )}
             <h1
               style={{
                 fontSize: activeSlide.type === 'multiple_choice' ? '1.05rem' : '1.4rem',
@@ -1117,51 +1118,50 @@ export default function AttendeeVotingPage() {
                   </div>
                 ) : (
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '14px' }}>
-                    {(activeSlide.options || []).map((opt, i) => {
-                      const colorScheme = optionColors[i % optionColors.length];
-
-                      return (
-                        <button
-                          key={opt}
-                          type="button"
-                          onClick={() => submitVote(opt)}
-                          disabled={votingLocked || gameState === 'QUESTION_LOCKED'}
+                    {(activeSlide.options || []).map((opt, i) => (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => submitVote(opt)}
+                        disabled={votingLocked || gameState === 'QUESTION_LOCKED'}
+                        style={{
+                          background: '#fffaf3',
+                          color: 'var(--color-text-primary)',
+                          border: '1.5px solid var(--color-border-strong)',
+                          borderRadius: '16px',
+                          padding: '20px 24px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '16px',
+                          fontSize: '1.1rem',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          boxShadow: '0 3px 10px rgba(63,41,64,0.08)',
+                          transition: 'transform 0.15s ease, border-color 0.15s ease',
+                          opacity: votingLocked || gameState === 'QUESTION_LOCKED' ? 0.6 : 1,
+                          textAlign: 'left',
+                        }}
+                      >
+                        <span
                           style={{
-                            background: colorScheme.bg,
-                            color: colorScheme.text,
-                            border: 'none',
-                            borderRadius: '16px',
-                            padding: '20px 24px',
+                            width: '32px',
+                            height: '32px',
+                            borderRadius: '8px',
+                            background: 'var(--color-primary)',
+                            color: '#fffaf3',
                             display: 'flex',
                             alignItems: 'center',
-                            gap: '16px',
-                            fontSize: '1.25rem',
+                            justifyContent: 'center',
+                            fontSize: '0.95rem',
                             fontWeight: 800,
-                            cursor: 'pointer',
-                            boxShadow: '0 6px 20px rgba(63,41,64,0.25)',
-                            transition: 'transform 0.15s ease, filter 0.15s ease',
-                            opacity: votingLocked || gameState === 'QUESTION_LOCKED' ? 0.6 : 1,
-                            textAlign: 'left',
+                            flexShrink: 0,
                           }}
                         >
-                          <span
-                            style={{
-                              width: '36px',
-                              height: '36px',
-                              borderRadius: '8px',
-                              background: 'rgba(63,41,64,0.2)',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: '1.2rem',
-                            }}
-                          >
-                            {colorScheme.symbol}
-                          </span>
-                          <span style={{ flex: 1 }}>{opt}</span>
-                        </button>
-                      );
-                    })}
+                          {String.fromCharCode(65 + i)}
+                        </span>
+                        <span style={{ flex: 1 }}>{opt}</span>
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
