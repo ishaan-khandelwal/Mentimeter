@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import Anthropic from '@anthropic-ai/sdk';
+import { generateWithGemini, getGeminiApiKey } from '@/lib/gemini';
 import { z } from 'zod';
 
 const AiSummarySchema = z.object({
@@ -24,8 +25,11 @@ export async function POST(req: Request) {
 
   const { question, slideType, responses } = parsed.data;
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey || apiKey === 'your-anthropic-api-key') {
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  const hasAnthropic = !!anthropicKey && anthropicKey !== 'your-anthropic-api-key';
+  const hasGemini = !!getGeminiApiKey();
+
+  if (!hasGemini && !hasAnthropic) {
     // Intelligent local fallback summary for dev / offline testing
     return NextResponse.json({
       summary: `Based on ${responses.length} responses to "${question}", the audience shows strong engagement with diverse viewpoints across key areas.`,
@@ -34,10 +38,7 @@ export async function POST(req: Request) {
     });
   }
 
-  try {
-    const anthropic = new Anthropic({ apiKey });
-
-    const systemPrompt = `You are an expert audience feedback analyzer.
+  const systemPrompt = `You are an expert audience feedback analyzer.
 Analyze the provided audience responses to a presentation poll question.
 Provide a concise executive summary (2-3 sentences), identify 3 top recurring themes, and classify overall audience sentiment.
 Return strictly valid JSON with this format:
@@ -47,21 +48,28 @@ Return strictly valid JSON with this format:
   "sentiment": "Positive" | "Neutral" | "Constructive / Mixed" | "Critical"
 }`;
 
-    const prompt = `Slide Question: "${question}" (Type: ${slideType})
+  const userPrompt = `Slide Question: "${question}" (Type: ${slideType})
 Audience Responses:
 ${JSON.stringify(responses, null, 2)}
 
 Provide your executive synthesis:`;
 
-    const response = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 1024,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: prompt }],
-    });
+  try {
+    let textContent = '';
 
-    const firstContent = response.content[0];
-    const textContent = firstContent.type === 'text' ? firstContent.text : '';
+    if (hasGemini) {
+      textContent = await generateWithGemini({ systemPrompt, userPrompt, maxOutputTokens: 1024 });
+    } else {
+      const anthropic = new Anthropic({ apiKey: anthropicKey });
+      const response = await anthropic.messages.create({
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+      });
+      const firstContent = response.content[0];
+      textContent = firstContent.type === 'text' ? firstContent.text : '';
+    }
 
     const jsonMatch = textContent.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {

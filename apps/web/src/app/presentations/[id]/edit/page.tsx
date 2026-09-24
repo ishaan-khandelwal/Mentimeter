@@ -58,6 +58,7 @@ export default function PresentationEditorPage() {
   const [showAiModal, setShowAiModal] = useState(false);
   const [aiTopic, setAiTopic] = useState('');
   const [aiCount, setAiCount] = useState(3);
+  const [aiDifficulty, setAiDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
   const [aiGenerating, setAiGenerating] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
@@ -529,7 +530,7 @@ export default function PresentationEditorPage() {
       const res = await fetch('/api/v1/ai/questions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: aiTopic.trim(), count: aiCount }),
+        body: JSON.stringify({ topic: aiTopic.trim(), count: aiCount, difficulty: aiDifficulty }),
       });
 
       const data = await res.json();
@@ -1968,18 +1969,44 @@ export default function PresentationEditorPage() {
               />
             </div>
 
-            <div className="form-group" style={{ marginBottom: '24px' }}>
-              <label className="form-label">Number of Interactive Slides</label>
-              <select
-                value={aiCount}
-                onChange={(e) => setAiCount(Number(e.target.value))}
-                className="form-select"
-              >
-                <option value="2">2 slides</option>
-                <option value="3">3 slides</option>
-                <option value="4">4 slides</option>
-                <option value="5">5 slides</option>
-              </select>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
+              <div className="form-group">
+                <label className="form-label">Number of Slides</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  step={1}
+                  value={aiCount}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (raw === '') {
+                      setAiCount(1);
+                      return;
+                    }
+                    const parsed = parseInt(raw, 10);
+                    if (Number.isNaN(parsed)) return;
+                    setAiCount(Math.min(20, Math.max(1, parsed)));
+                  }}
+                  className="form-input"
+                />
+                <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                  Type any number from 1 to 20
+                </span>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Question Difficulty</label>
+                <select
+                  value={aiDifficulty}
+                  onChange={(e) => setAiDifficulty(e.target.value as 'easy' | 'medium' | 'hard')}
+                  className="form-select"
+                >
+                  <option value="easy">🟢 Easy — light &amp; accessible</option>
+                  <option value="medium">🟡 Medium — general engagement</option>
+                  <option value="hard">🔴 Hard — expert &amp; in-depth</option>
+                </select>
+              </div>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
