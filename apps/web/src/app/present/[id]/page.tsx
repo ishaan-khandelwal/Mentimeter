@@ -76,7 +76,6 @@ export default function PresenterLivePage() {
   const [currentSlideId, setCurrentSlideId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [votingLocked, setVotingLocked] = useState(false);
-  const [presenceCount, setPresenceCount] = useState<number>(0);
   const [tallies, setTallies] = useState<Record<string, Record<string, number>>>({});
   const [qaList, setQaList] = useState<QAQuestion[]>([]);
   const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
@@ -244,10 +243,6 @@ export default function PresenterLivePage() {
       }));
     };
 
-    const onPresenceUpdate = (data: { count: number }) => {
-      setPresenceCount(data.count);
-    };
-
     const onQuestionUpdate = (data: { questions: QAQuestion[] }) => {
       setQaList(data.questions || []);
     };
@@ -274,7 +269,6 @@ export default function PresenterLivePage() {
       count: number;
     }) => {
       setLobbyParticipants(data.participants || []);
-      setPresenceCount(data.count || 0);
     };
 
     const onTimerUpdate = (data: { slideId: string; answeredCount: number; totalParticipants: number }) => {
@@ -303,7 +297,6 @@ export default function PresenterLivePage() {
     socket.on('slide_changed', onSlideChanged);
     socket.on('voting_locked', onVotingLocked);
     socket.on('tally_update', onTallyUpdate);
-    socket.on('presence_update', onPresenceUpdate);
     socket.on('question_update', onQuestionUpdate);
     socket.on('game_state_changed', onGameStateChanged);
     socket.on('lobby_update', onLobbyUpdate);
@@ -317,7 +310,6 @@ export default function PresenterLivePage() {
       socket.off('slide_changed', onSlideChanged);
       socket.off('voting_locked', onVotingLocked);
       socket.off('tally_update', onTallyUpdate);
-      socket.off('presence_update', onPresenceUpdate);
       socket.off('question_update', onQuestionUpdate);
       socket.off('game_state_changed', onGameStateChanged);
       socket.off('lobby_update', onLobbyUpdate);
@@ -346,7 +338,6 @@ export default function PresenterLivePage() {
             // online-filtered list), so a stale local entry that's no longer
             // in the server's response means that participant actually left.
             setLobbyParticipants(data.participants);
-            setPresenceCount(data.count ?? data.participants.length);
           }
         }
       } catch {}
@@ -775,7 +766,11 @@ export default function PresenterLivePage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.88rem' }}>
             <span style={{ color: '#3f9a73', fontSize: '1.2rem' }}>●</span>
-            <span style={{ fontWeight: 700 }}>{Math.max(presenceCount, lobbyParticipants.length)}</span>
+            {/* lobbyParticipants is the accurate, deduplicated, online-filtered
+                roster; presenceCount is a raw Redis INCR/DECR counter that
+                isn't deduplicated per participant and drifts upward across
+                reconnects/reloads, so it's not used for this headcount. */}
+            <span style={{ fontWeight: 700 }}>{lobbyParticipants.length}</span>
             <span style={{ color: 'var(--color-text-muted)' }}>players</span>
           </div>
 
