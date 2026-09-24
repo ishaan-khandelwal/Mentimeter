@@ -1,6 +1,6 @@
 // Thin wrapper around the Groq API (OpenAI-compatible chat completions) using
 // plain fetch — no SDK dependency needed. Free API key at https://console.groq.com/keys
-const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
 
 export function getGroqApiKey(): string | null {
   const key = process.env.GROQ_API_KEY;
