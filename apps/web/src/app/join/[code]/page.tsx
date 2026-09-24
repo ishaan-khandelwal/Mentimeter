@@ -47,19 +47,6 @@ interface QAItem {
   createdAt: number;
 }
 
-const AVATAR_OPTIONS = ['🦊', '🚀', '🦁', '⚡', '🦄', '🐼', '🎮', '🦉', '🐯', '🐙', '🌟', '🔥'];
-
-const RANDOM_NICKNAMES = [
-  'Swift Fox',
-  'Cosmic Owl',
-  'Neon Tiger',
-  'Pixel Panda',
-  'Turbo Lion',
-  'Hyper Falcon',
-  'Quantum Lynx',
-  'Star Voyager',
-];
-
 export default function AttendeeVotingPage() {
   const params = useParams();
   const router = useRouter();
@@ -74,7 +61,7 @@ export default function AttendeeVotingPage() {
 
   // Nickname & Avatar Setup State
   const [nickname, setNickname] = useState('');
-  const [avatar, setAvatar] = useState('🦊');
+  const [avatar, setAvatar] = useState('');
   const [hasJoinedLobby, setHasJoinedLobby] = useState(false);
 
   // Competition Game Loop State
@@ -116,26 +103,16 @@ export default function AttendeeVotingPage() {
     currentSlideIdRef.current = currentSlideId;
   }, [currentSlideId]);
 
-  // Initialize nickname and avatar from localStorage
+  // Pre-fill from a previous visit as a convenience only — the participant
+  // must still explicitly confirm on the picker screen below (STEP 1) before
+  // joining; we never auto-generate a name/avatar or silently skip the picker.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const savedNick = localStorage.getItem('pollwave_nickname');
     const savedAvatar = localStorage.getItem('pollwave_avatar');
 
-    if (savedNick) {
-      setNickname(savedNick);
-      setHasJoinedLobby(true);
-    } else {
-      const randomNick = RANDOM_NICKNAMES[Math.floor(Math.random() * RANDOM_NICKNAMES.length)];
-      setNickname(randomNick);
-    }
-
-    if (savedAvatar) {
-      setAvatar(savedAvatar);
-    } else {
-      const randomAvatar = AVATAR_OPTIONS[Math.floor(Math.random() * AVATAR_OPTIONS.length)];
-      setAvatar(randomAvatar);
-    }
+    if (savedNick) setNickname(savedNick);
+    if (savedAvatar) setAvatar(savedAvatar);
   }, []);
 
   const activeSlide = slides.find((s) => s._id === currentSlideId) || null;
@@ -161,34 +138,40 @@ export default function AttendeeVotingPage() {
     }
 
     const onConnect = () => {
-      const activeNick = localStorage.getItem('pollwave_nickname') || nickname || 'Swift Fox';
-      const activeAvatar = localStorage.getItem('pollwave_avatar') || avatar || '🦊';
+      // Fetch slides/session state in the background regardless of whether this
+      // visitor has picked a name yet — but only auto-register them as a visible
+      // lobby participant if we already know who they are (a returning visitor
+      // with a saved nickname). First-time visitors must submit the picker
+      // screen (handleJoinLobby) before they're registered / shown to the
+      // presenter — never auto-registered with a fabricated identity.
+      const savedNick = localStorage.getItem('pollwave_nickname');
+      const savedAvatar = localStorage.getItem('pollwave_avatar');
 
       socket.emit('join_session', {
         joinCode: code,
         participantToken,
-        nickname: activeNick,
-        avatar: activeAvatar,
+        ...(savedNick ? { nickname: savedNick, avatar: savedAvatar || '🦊' } : {}),
       });
 
-      // Register immediately in lobby so attendee is visible right away to presenter
-      socket.emit('join_lobby', {
-        joinCode: code,
-        participantToken,
-        nickname: activeNick,
-        avatar: activeAvatar,
-      });
-
-      // Also persist to lobby via REST API for serverless/Vercel environments
-      fetch(`/api/v1/presentations/${code}/lobby`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      if (savedNick) {
+        socket.emit('join_lobby', {
+          joinCode: code,
           participantToken,
-          nickname: activeNick,
-          avatar: activeAvatar,
-        }),
-      }).catch(() => {});
+          nickname: savedNick,
+          avatar: savedAvatar || '🦊',
+        });
+
+        // Also persist to lobby via REST API for serverless/Vercel environments
+        fetch(`/api/v1/presentations/${code}/lobby`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            participantToken,
+            nickname: savedNick,
+            avatar: savedAvatar || '🦊',
+          }),
+        }).catch(() => {});
+      }
     };
 
     const onSessionJoined = (data: {
@@ -343,19 +326,23 @@ export default function AttendeeVotingPage() {
     // Immediate fetch to guarantee initial connection without getting stuck on "Joining Session..."
     const syncLobby = async () => {
       try {
-        const activeNick = localStorage.getItem('pollwave_nickname') || nickname || 'Swift Fox';
-        const activeAvatar = localStorage.getItem('pollwave_avatar') || avatar || '🦊';
+        // Only register a returning visitor with a saved identity via this REST
+        // fallback — never a fabricated one. First-time visitors register via
+        // handleJoinLobby once they submit the picker screen.
+        const savedNick = localStorage.getItem('pollwave_nickname');
+        const savedAvatar = localStorage.getItem('pollwave_avatar');
 
-        // 1. Register attendee into lobby via REST
-        await fetch(`/api/v1/presentations/${code}/lobby`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            participantToken,
-            nickname: activeNick,
-            avatar: activeAvatar,
-          }),
-        }).catch(() => {});
+        if (savedNick) {
+          await fetch(`/api/v1/presentations/${code}/lobby`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              participantToken,
+              nickname: savedNick,
+              avatar: savedAvatar || '🦊',
+            }),
+          }).catch(() => {});
+        }
 
         // 2. Fetch lobby & slide details
         const res = await fetch(`/api/v1/presentations/${code}/lobby`);
@@ -473,7 +460,7 @@ export default function AttendeeVotingPage() {
   // Attendee confirms Nickname & Avatar
   const handleJoinLobby = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nickname.trim()) return;
+    if (!nickname.trim() || !avatar) return;
 
     const cleanNick = nickname.trim().slice(0, 20);
     localStorage.setItem('pollwave_nickname', cleanNick);
@@ -660,7 +647,7 @@ export default function AttendeeVotingPage() {
 
   // ─── STEP 1: Nickname & Avatar Selection Screen ─────────────────────────
   if (!hasJoinedLobby) {
-    const activeChar = resolveCharacter(avatar);
+    const activeChar = avatar ? resolveCharacter(avatar) : null;
 
     return (
       <div className="attendee-screen" style={{ justifyContent: 'center', alignItems: 'center', padding: '24px' }}>
@@ -670,21 +657,22 @@ export default function AttendeeVotingPage() {
               width: '84px',
               height: '84px',
               borderRadius: '50%',
-              background: activeChar.trackGradient,
+              background: activeChar ? activeChar.trackGradient : 'rgba(92, 54, 73, 0.08)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: '3rem',
+              fontSize: activeChar ? '3rem' : '2rem',
               margin: '0 auto 12px',
-              boxShadow: `0 0 28px ${activeChar.primaryColor}88`,
-              border: '3px solid #ffffff',
+              boxShadow: activeChar ? `0 0 28px ${activeChar.primaryColor}88` : 'none',
+              border: activeChar ? '3px solid #ffffff' : '2px dashed var(--color-border)',
+              color: 'var(--color-text-muted)',
             }}
           >
-            {avatar}
+            {avatar || '?'}
           </div>
           <h2 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '4px' }}>Choose Your Racing Hero</h2>
-          <span style={{ fontSize: '0.85rem', color: activeChar.primaryColor, fontWeight: 700, display: 'block', marginBottom: '18px' }}>
-            ⚡ {activeChar.name} — {activeChar.title}
+          <span style={{ fontSize: '0.85rem', color: activeChar ? activeChar.primaryColor : 'var(--color-text-muted)', fontWeight: 700, display: 'block', marginBottom: '18px' }}>
+            {activeChar ? `⚡ ${activeChar.name} — ${activeChar.title}` : 'Pick an avatar below'}
           </span>
 
           {/* Character selection cards grid */}
@@ -750,8 +738,13 @@ export default function AttendeeVotingPage() {
               />
             </div>
 
-            <button type="submit" className="btn btn--primary btn--full" style={{ padding: '14px', fontSize: '1.1rem', fontWeight: 800 }}>
-              Join Quiz Sprint ➔
+            <button
+              type="submit"
+              disabled={!nickname.trim() || !avatar}
+              className="btn btn--primary btn--full"
+              style={{ padding: '14px', fontSize: '1.1rem', fontWeight: 800, opacity: !nickname.trim() || !avatar ? 0.6 : 1 }}
+            >
+              {!avatar ? 'Pick an avatar to continue' : 'Join Quiz Sprint ➔'}
             </button>
           </form>
         </div>
@@ -831,7 +824,20 @@ export default function AttendeeVotingPage() {
   if (gameState === 'COUNTDOWN') {
     return (
       <div className="attendee-screen" style={{ justifyContent: 'center', alignItems: 'center', padding: '24px' }}>
-        <div style={{ textAlign: 'center' }}>
+        <div style={{ textAlign: 'center', maxWidth: '480px', width: '100%' }}>
+          {activeSlide?.question && (
+            <h1
+              style={{
+                fontSize: '1rem',
+                fontWeight: 700,
+                lineHeight: 1.35,
+                color: 'var(--color-text-secondary)',
+                marginBottom: '28px',
+              }}
+            >
+              {activeSlide.question}
+            </h1>
+          )}
           <div
             style={{
               width: '140px',
@@ -850,7 +856,7 @@ export default function AttendeeVotingPage() {
           >
             {countdownNumber}
           </div>
-          <h2 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '8px' }}>Get Ready!</h2>
+          <h2 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '8px' }}>Get Ready!</h2>
           <p style={{ color: 'var(--color-text-secondary)', fontSize: '1.05rem' }}>
             Answer quickly for bonus speed points!
           </p>
@@ -1129,7 +1135,7 @@ export default function AttendeeVotingPage() {
           <div style={{ width: '100%', maxWidth: '520px', margin: '0 auto' }}>
             <h1
               style={{
-                fontSize: '1.4rem',
+                fontSize: activeSlide.type === 'multiple_choice' ? '1.05rem' : '1.4rem',
                 fontWeight: 800,
                 textAlign: 'center',
                 marginBottom: '24px',
