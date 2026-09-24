@@ -1,6 +1,6 @@
 // Thin wrapper around the Gemini API (Google AI Studio) using plain fetch —
 // no SDK dependency needed. Get a free API key at https://aistudio.google.com/apikey
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 
 export function getGeminiApiKey(): string | null {
   const key = process.env.GEMINI_API_KEY;
