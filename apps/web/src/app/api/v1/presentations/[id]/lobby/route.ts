@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@pollwave/shared';
 import crypto from 'crypto';
+import { readLiveState } from '@/lib/liveState';
 
 interface RouteParams {
   params: { id: string };
@@ -76,8 +77,18 @@ export async function GET(_req: Request, { params }: RouteParams) {
     order: s.order,
   }));
 
-  const resolvedSlideId = lobbyState.currentSlideId || activeSession?.currentSlideId || firstSlide?.id || null;
-  const resolvedGameState = lobbyState.gameState || (activeSession?.currentSlideId ? 'QUESTION_ACTIVE' : 'LOBBY');
+  // The socket server mirrors every game-state transition (COUNTDOWN,
+  // QUESTION_LOCKED, REVEAL, LEADERBOARD, FINAL_RESULTS, ...) into Redis.
+  // Prefer that live snapshot over this route's own in-memory lobby state,
+  // which only ever learns about the very first QUESTION_ACTIVE transition
+  // and would otherwise get stuck there for the rest of the quiz.
+  const liveState = activeSession ? await readLiveState(activeSession.id) : null;
+
+  const resolvedSlideId =
+    liveState?.currentSlideId ?? lobbyState.currentSlideId ?? activeSession?.currentSlideId ?? firstSlide?.id ?? null;
+  const resolvedGameState =
+    liveState?.gameState ?? lobbyState.gameState ?? (activeSession?.currentSlideId ? 'QUESTION_ACTIVE' : 'LOBBY');
+  const resolvedVotingLocked = liveState?.votingLocked ?? activeSession?.votingLocked ?? false;
 
   return NextResponse.json({
     presentationId: presentation.id,
@@ -85,9 +96,12 @@ export async function GET(_req: Request, { params }: RouteParams) {
     sessionId: activeSession?.id || null,
     participants,
     count: participants.length,
-    votingLocked: activeSession?.votingLocked || false,
+    votingLocked: resolvedVotingLocked,
     currentSlideId: resolvedSlideId,
     gameState: resolvedGameState,
+    questionStartedAt: liveState?.questionStartedAt ?? null,
+    durationSeconds: liveState?.durationSeconds ?? null,
+    correctAnswer: liveState?.correctAnswer ?? null,
     slides: formattedSlides,
   });
 }

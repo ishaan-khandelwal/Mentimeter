@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { getSocket } from '@/lib/socket';
 import Link from 'next/link';
@@ -87,6 +87,12 @@ export default function PresenterLivePage() {
   const [lobbyParticipants, setLobbyParticipants] = useState<
     Array<{ token: string; nickname: string; avatar: string }>
   >([]);
+  // Ref mirror so socket handlers registered once at mount always see the
+  // latest lobby size instead of the stale (usually empty) value from mount.
+  const lobbyParticipantsRef = useRef(lobbyParticipants);
+  useEffect(() => {
+    lobbyParticipantsRef.current = lobbyParticipants;
+  }, [lobbyParticipants]);
   const [countdownNumber, setCountdownNumber] = useState<number>(3);
   const [timerState, setTimerState] = useState<QuestionTimerState | null>(null);
   const [remainingTime, setRemainingTime] = useState<number>(20);
@@ -283,7 +289,7 @@ export default function PresenterLivePage() {
         questionStartedAt: prev?.questionStartedAt || Date.now(),
         durationSeconds: prev?.durationSeconds || 20,
         answeredCount: data.answeredCount,
-        totalParticipants: Math.max(data.totalParticipants, lobbyParticipants.length, 1),
+        totalParticipants: Math.max(data.totalParticipants, lobbyParticipantsRef.current.length, 1),
       }));
     };
 

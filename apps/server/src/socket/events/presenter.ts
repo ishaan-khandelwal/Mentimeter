@@ -13,6 +13,7 @@ import { clearSession } from '../tally/tallyManager';
 import { clearPresence, broadcastPresence, setPresenterOnline } from '../rooms/presence';
 import { getPeakPresence, getPresenceCount } from '../rooms/presence';
 import { gameManager } from '../game/gameManager';
+import { publishLiveState, clearLiveState } from '../game/liveState';
 import type {
   ChangeSlidePayload,
   LockVotingPayload,
@@ -71,6 +72,14 @@ export async function handleNextSlide(
   gameSessionNext.answeredParticipants.clear();
   gameSessionNext.questionStartedAt = Date.now();
 
+  publishLiveState(sessionId, {
+    gameState: 'QUESTION_ACTIVE',
+    currentSlideId: nextSlide.id,
+    votingLocked: false,
+    questionStartedAt: gameSessionNext.questionStartedAt,
+    durationSeconds: gameSessionNext.durationSeconds,
+  });
+
   const event: SlideChangedEvent = {
     currentSlideId: nextSlide.id,
     votingLocked: false,
@@ -124,6 +133,14 @@ export async function handlePrevSlide(
   gameSessionPrev.answeredParticipants.clear();
   gameSessionPrev.questionStartedAt = Date.now();
 
+  publishLiveState(sessionId, {
+    gameState: 'QUESTION_ACTIVE',
+    currentSlideId: prevSlide.id,
+    votingLocked: false,
+    questionStartedAt: gameSessionPrev.questionStartedAt,
+    durationSeconds: gameSessionPrev.durationSeconds,
+  });
+
   const event: SlideChangedEvent = {
     currentSlideId: prevSlide.id,
     votingLocked: false,
@@ -171,6 +188,14 @@ export async function handleGoToSlide(
   gameSessionGoTo.answeredParticipants.clear();
   gameSessionGoTo.questionStartedAt = Date.now();
 
+  publishLiveState(sessionId, {
+    gameState: 'QUESTION_ACTIVE',
+    currentSlideId: slideId,
+    votingLocked: false,
+    questionStartedAt: gameSessionGoTo.questionStartedAt,
+    durationSeconds: gameSessionGoTo.durationSeconds,
+  });
+
   const event: SlideChangedEvent = { currentSlideId: slideId, votingLocked: false };
   io.to(`session:${sessionId}`).emit('slide_changed', event);
 }
@@ -185,6 +210,26 @@ export async function handleLockVoting(
     where: { id: sessionId },
     data: { votingLocked: locked },
   });
+
+  // Keep the in-memory game state in sync so vote.ts's server-side lock
+  // enforcement actually reflects this manual toggle, not just the DB flag.
+  const gameSession = gameManager.getSession(sessionId);
+  if (gameSession) {
+    if (locked && gameSession.state === 'QUESTION_ACTIVE') {
+      gameManager.lockQuestion(sessionId);
+    } else if (!locked && gameSession.state === 'QUESTION_LOCKED') {
+      gameManager.setState(sessionId, 'QUESTION_ACTIVE');
+    }
+
+    publishLiveState(sessionId, {
+      gameState: gameSession.state,
+      currentSlideId: gameSession.currentSlideId,
+      votingLocked: locked,
+      questionStartedAt: gameSession.questionStartedAt,
+      durationSeconds: gameSession.durationSeconds,
+    });
+  }
+
   io.to(`session:${sessionId}`).emit('voting_locked', { locked });
 }
 
@@ -235,6 +280,7 @@ export async function handleEndSession(
   // Clean up
   gameManager.endSession(sessionId);
   clearSession(sessionId);
+  await clearLiveState(sessionId);
   await clearPresence(sessionId);
   await setPresenterOnline(io, sessionId, false);
 

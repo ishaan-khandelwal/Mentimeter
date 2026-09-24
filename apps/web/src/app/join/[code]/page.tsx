@@ -279,6 +279,22 @@ export default function AttendeeVotingPage() {
         setErrorMessage(data.message || 'The session code is invalid or the presentation has ended.');
         return;
       }
+      if (data.code === 'VOTING_CLOSED') {
+        // Server rejected the vote (locked/revealed already) — undo the optimistic
+        // "Answer Submitted!" state so the attendee isn't stuck on a vote that never counted.
+        const slideId = currentSlideIdRef.current;
+        if (slideId) {
+          setVotedSlides((prev) => {
+            const next = { ...prev };
+            delete next[slideId];
+            return next;
+          });
+        }
+        setMySubmittedAnswer(null);
+        setAnnouncementNotification(data.message || 'Time ran out before your answer was received.');
+        setTimeout(() => setAnnouncementNotification(null), 5000);
+        return;
+      }
       console.warn('[Socket Error]', data);
     };
 
@@ -358,6 +374,18 @@ export default function AttendeeVotingPage() {
           if (data.gameState && data.gameState !== 'LOBBY') {
             setGameState(data.gameState);
           }
+          if (data.gameState === 'QUESTION_ACTIVE' && data.questionStartedAt && data.durationSeconds) {
+            setTimerState({
+              slideId: data.currentSlideId,
+              questionStartedAt: data.questionStartedAt,
+              durationSeconds: data.durationSeconds,
+              answeredCount: 0,
+              totalParticipants: 1,
+            });
+          }
+          if (data.gameState === 'REVEAL' && data.correctAnswer !== undefined && data.correctAnswer !== null) {
+            setRevealData((prev) => prev ?? { correctAnswer: data.correctAnswer });
+          }
           // Mark as connected so attendee can immediately interact
           setStatus('connected');
         }
@@ -368,22 +396,42 @@ export default function AttendeeVotingPage() {
 
     syncLobby();
 
-    // CRITICAL: ONLY poll while waiting in LOBBY for the host to launch the quiz.
-    // If the quiz is already active (COUNTDOWN, QUESTION_ACTIVE, REVEAL, etc.), do NOT poll lobby!
-    if (gameState !== 'LOBBY') return;
-
+    // Keep polling as a fallback for as long as the socket isn't connected —
+    // not just during LOBBY. The socket server mirrors every game-state
+    // transition (COUNTDOWN, QUESTION_ACTIVE, QUESTION_LOCKED, REVEAL,
+    // LEADERBOARD, FINAL_RESULTS) into Redis, and this route reads that
+    // snapshot, so a student whose WebSocket never connects (or drops mid
+    // quiz) still advances through the whole quiz instead of getting stuck
+    // on whichever state they last saw.
     const pollInterval = setInterval(async () => {
       if (!isMounted) return;
+      if (getSocket()?.connected) return; // socket is healthy — it already drives everything live
+
       try {
         const res = await fetch(`/api/v1/presentations/${code}/lobby`);
         if (res.ok && isMounted) {
           const data = await res.json();
-          // Only transition forward into the quiz
+          // Only transition forward out of LOBBY; never revert an active quiz back to it
           if (data.gameState && data.gameState !== 'LOBBY') {
             setGameState(data.gameState);
           }
           if (data.currentSlideId && currentSlideIdRef.current !== data.currentSlideId) {
             setCurrentSlideId(data.currentSlideId);
+          }
+          if (data.votingLocked !== undefined) {
+            setVotingLocked(data.votingLocked);
+          }
+          if (data.gameState === 'QUESTION_ACTIVE' && data.questionStartedAt && data.durationSeconds) {
+            setTimerState({
+              slideId: data.currentSlideId,
+              questionStartedAt: data.questionStartedAt,
+              durationSeconds: data.durationSeconds,
+              answeredCount: 0,
+              totalParticipants: 1,
+            });
+          }
+          if (data.gameState === 'REVEAL' && data.correctAnswer !== undefined && data.correctAnswer !== null) {
+            setRevealData((prev) => prev ?? { correctAnswer: data.correctAnswer });
           }
           if (Array.isArray(data.slides) && (!slides || slides.length === 0)) {
             setSlides(data.slides);
@@ -396,7 +444,7 @@ export default function AttendeeVotingPage() {
       isMounted = false;
       clearInterval(pollInterval);
     };
-  }, [code, participantToken, nickname, avatar, gameState]);
+  }, [code, participantToken, nickname, avatar]);
 
   // Question timer countdown effect
   useEffect(() => {

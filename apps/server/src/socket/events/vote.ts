@@ -46,14 +46,27 @@ export async function handleVote(
 
   const hashedToken = hashToken(participantToken);
 
+  // Record in Competition Game Manager FIRST (speed scoring & streak bonus) —
+  // this is the authoritative lock/stale-slide check. Only touch the tally
+  // (Redis) and persistence below if the vote is actually accepted, so a
+  // rejected vote never pollutes the live tally or gets falsely acknowledged.
+  const gameSession = gameManager.getSession(sessionId);
+  const scoreResult = gameManager.recordAnswer(sessionId, slideId, participantToken, value);
+
+  // A tracked game session exists but rejected this vote (question already
+  // locked/revealed, or vote is for a slide that's no longer live) — reject
+  // outright instead of silently recording/acknowledging it below.
+  if (!scoreResult && gameSession) {
+    socket.emit('error', { code: 'VOTING_CLOSED', message: 'This question is no longer accepting answers' });
+    return;
+  }
+
   // Submit to tally (Redis + local memory + Pub/Sub)
   await submitVote(sessionId, slideId, value, hashedToken);
 
   // Mark for next broadcast tick (200ms throttled)
   markDirty(sessionId, slideId);
 
-  // Record in Competition Game Manager (speed scoring & streak bonus)
-  const scoreResult = gameManager.recordAnswer(sessionId, slideId, participantToken, value);
   if (scoreResult) {
     socket.emit('participant_score', {
       pointsEarned: scoreResult.pointsEarned,

@@ -71,4 +71,11 @@ export const keys = {
 
   /** Per-token vote rate limit for a session */
   voteLimit: (sessionId: string, token: string, slideId: string) => `pollwave:vote_limit:${sessionId}:${token}:${slideId}`,
+
+  /**
+   * Live game-state snapshot for a session, shared with the Next.js REST
+   * fallback (a separate process) so it can mirror the socket-driven game
+   * loop instead of only ever seeing the very first QUESTION_ACTIVE state.
+   */
+  liveState: (sessionId: string) => `pollwave:live_state:${sessionId}`,
 };

@@ -300,11 +300,24 @@ export class GameManager {
       return null;
     }
 
-    // Auto-align session to the submitted slide so latency never drops a vote
-    if (session.currentSlideId !== slideId) {
+    // Reject stale votes for a slide that is no longer the live question —
+    // never let a late arrival hijack the shared "current slide" pointer.
+    if (session.currentSlideId && session.currentSlideId !== slideId) {
+      return null;
+    }
+    if (!session.currentSlideId) {
       session.currentSlideId = slideId;
     }
 
+    // Reject votes once the question has already been locked/revealed —
+    // the client-side disabled button is not a security boundary.
+    const closedStates: GameState[] = ['QUESTION_LOCKED', 'REVEAL', 'LEADERBOARD', 'FINAL_RESULTS'];
+    if (closedStates.includes(session.state)) {
+      return null;
+    }
+
+    // Self-heal: a vote can legitimately arrive a beat before the QUESTION_ACTIVE
+    // state/timer broadcast lands (e.g. brief jitter during COUNTDOWN -> ACTIVE).
     if (session.state !== 'QUESTION_ACTIVE') {
       session.state = 'QUESTION_ACTIVE';
       if (session.questionStartedAt <= 0) {

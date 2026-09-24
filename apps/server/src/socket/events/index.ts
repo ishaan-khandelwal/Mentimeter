@@ -35,6 +35,7 @@ import {
 import { registerSession } from '../persistence/flushWorker';
 import { config } from '../../config';
 import { gameManager } from '../game/gameManager';
+import { publishLiveState, clearLiveState } from '../game/liveState';
 import type {
   JoinSessionPayload,
   SubmitVotePayload,
@@ -496,6 +497,12 @@ export function registerSocketHandlers(io: IOServer): void {
       const presentationId = session.presentationId;
 
       if (targetState === 'COUNTDOWN') {
+        publishLiveState(sessionId, {
+          gameState: 'COUNTDOWN',
+          currentSlideId: targetSlide.id,
+          votingLocked: true,
+        });
+
         gameManager.startCountdown(
           sessionId,
           presentationId,
@@ -534,6 +541,12 @@ export function registerSocketHandlers(io: IOServer): void {
                   data: { votingLocked: true },
                 }).catch(console.error);
 
+                publishLiveState(sessionId, {
+                  gameState: 'QUESTION_LOCKED',
+                  currentSlideId: targetSlide.id,
+                  votingLocked: true,
+                });
+
                 io.to(`session:${sessionId}`).emit('voting_locked', { locked: true });
                 io.to(`session:${sessionId}`).emit('game_state_changed', {
                   state: 'QUESTION_LOCKED',
@@ -542,6 +555,14 @@ export function registerSocketHandlers(io: IOServer): void {
               },
               slideOptions
             );
+
+            publishLiveState(sessionId, {
+              gameState: 'QUESTION_ACTIVE',
+              currentSlideId: targetSlide.id,
+              votingLocked: false,
+              questionStartedAt: timerState?.questionStartedAt,
+              durationSeconds: timerState?.durationSeconds ?? durationSeconds,
+            });
 
             io.to(`session:${sessionId}`).emit('game_state_changed', {
               state: 'QUESTION_ACTIVE',
@@ -574,6 +595,12 @@ export function registerSocketHandlers(io: IOServer): void {
               data: { votingLocked: true },
             }).catch(console.error);
 
+            publishLiveState(sessionId, {
+              gameState: 'QUESTION_LOCKED',
+              currentSlideId: targetSlide.id,
+              votingLocked: true,
+            });
+
             io.to(`session:${sessionId}`).emit('voting_locked', { locked: true });
             io.to(`session:${sessionId}`).emit('game_state_changed', {
               state: 'QUESTION_LOCKED',
@@ -582,6 +609,14 @@ export function registerSocketHandlers(io: IOServer): void {
           },
           slideOptions
         );
+
+        publishLiveState(sessionId, {
+          gameState: 'QUESTION_ACTIVE',
+          currentSlideId: targetSlide.id,
+          votingLocked: false,
+          questionStartedAt: timerState?.questionStartedAt,
+          durationSeconds: timerState?.durationSeconds ?? durationSeconds,
+        });
 
         io.to(`session:${sessionId}`).emit('game_state_changed', {
           state: 'QUESTION_ACTIVE',
@@ -594,6 +629,13 @@ export function registerSocketHandlers(io: IOServer): void {
           where: { id: sessionId },
           data: { votingLocked: true },
         });
+
+        publishLiveState(sessionId, {
+          gameState: 'QUESTION_LOCKED',
+          currentSlideId: targetSlide.id,
+          votingLocked: true,
+        });
+
         io.to(`session:${sessionId}`).emit('voting_locked', { locked: true });
         io.to(`session:${sessionId}`).emit('game_state_changed', {
           state: 'QUESTION_LOCKED',
@@ -602,6 +644,13 @@ export function registerSocketHandlers(io: IOServer): void {
       } else if (targetState === 'REVEAL') {
         gameManager.setState(sessionId, 'REVEAL');
         const revealTally = getLocalTally(sessionId, targetSlide.id);
+
+        publishLiveState(sessionId, {
+          gameState: 'REVEAL',
+          currentSlideId: targetSlide.id,
+          votingLocked: true,
+          correctAnswer: slideConfig.correctAnswer ?? null,
+        });
 
         io.to(`session:${sessionId}`).emit('game_state_changed', {
           state: 'REVEAL',
@@ -613,6 +662,12 @@ export function registerSocketHandlers(io: IOServer): void {
         gameManager.setState(sessionId, 'LEADERBOARD');
         const leaderboard = gameManager.getLeaderboard(sessionId);
 
+        publishLiveState(sessionId, {
+          gameState: 'LEADERBOARD',
+          currentSlideId: targetSlide.id,
+          votingLocked: true,
+        });
+
         io.to(`session:${sessionId}`).emit('leaderboard_update', leaderboard);
         io.to(`session:${sessionId}`).emit('game_state_changed', {
           state: 'LEADERBOARD',
@@ -621,6 +676,12 @@ export function registerSocketHandlers(io: IOServer): void {
       } else if (targetState === 'FINAL_RESULTS') {
         gameManager.setState(sessionId, 'FINAL_RESULTS');
         const results = gameManager.getFinalResults(sessionId);
+
+        publishLiveState(sessionId, {
+          gameState: 'FINAL_RESULTS',
+          currentSlideId: null,
+          votingLocked: true,
+        });
 
         io.to(`session:${sessionId}`).emit('final_results', results);
         io.to(`session:${sessionId}`).emit('game_state_changed', {
