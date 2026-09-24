@@ -35,7 +35,7 @@ import {
 import { registerSession } from '../persistence/flushWorker';
 import { config } from '../../config';
 import { gameManager } from '../game/gameManager';
-import { publishLiveState, clearLiveState } from '../game/liveState';
+import { publishLiveState, clearLiveState, publishLobbyState } from '../game/liveState';
 import type {
   JoinSessionPayload,
   SubmitVotePayload,
@@ -147,6 +147,7 @@ export function registerSocketHandlers(io: IOServer): void {
             avatar: (payload as any).avatar || '🦊',
           });
           io.to(`session:${sessionId}`).emit('lobby_update', lobbyData);
+          publishLobbyState(sessionId, lobbyData);
         }
 
         // Send current session state to new attendee
@@ -435,6 +436,7 @@ export function registerSocketHandlers(io: IOServer): void {
 
         // Broadcast to presenter & everyone in room
         io.to(`session:${sessionId}`).emit('lobby_update', lobbyData);
+        publishLobbyState(sessionId, lobbyData);
 
         const currentGameState = gameManager.getSession(sessionId);
         socket.emit('lobby_joined', {
@@ -731,6 +733,7 @@ export function registerSocketHandlers(io: IOServer): void {
           gameManager.setParticipantOffline(sessionId, data.participantToken);
           const lobbyData = gameManager.getLobbyList(sessionId);
           io.to(`session:${sessionId}`).emit('lobby_update', lobbyData);
+          publishLobbyState(sessionId, lobbyData);
         }
       }
 

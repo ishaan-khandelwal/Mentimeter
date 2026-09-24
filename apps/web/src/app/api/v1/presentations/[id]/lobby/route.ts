@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@pollwave/shared';
 import crypto from 'crypto';
-import { readLiveState } from '@/lib/liveState';
+import { readLiveState, readLobbyState } from '@/lib/liveState';
 
 interface RouteParams {
   params: { id: string };
@@ -55,7 +55,8 @@ export async function GET(_req: Request, { params }: RouteParams) {
   const activeSession = presentation.sessions[0];
   const firstSlide = presentation.slides[0];
 
-  // 1. Merge participants from in-memory lobby
+  // 1. Merge participants from in-memory lobby (fallback only — this log
+  // never removes anyone who leaves/disconnects, so it can only ever grow)
   const lobbyState = getOrCreateLobby(getLobbyKey(presentation.id));
   const codeKey = getLobbyKey(presentation.joinCode);
   const codeLobby = memoryLobby.get(codeKey);
@@ -66,7 +67,13 @@ export async function GET(_req: Request, { params }: RouteParams) {
     codeLobby.participants.forEach((p) => merged.set(p.token, { token: p.token, nickname: p.nickname, avatar: p.avatar }));
   }
 
-  const participants = Array.from(merged.values());
+  // The socket server mirrors its online-filtered roster into Redis on every
+  // join/disconnect — that's the real, currently-connected headcount. Prefer
+  // it over the in-memory join log above, which would otherwise leave stale
+  // participants (closed tabs, dropped connections, old test joins) counted
+  // forever.
+  const lobbySnapshot = activeSession ? await readLobbyState(activeSession.id) : null;
+  const participants = lobbySnapshot ? lobbySnapshot.participants : Array.from(merged.values());
 
   const formattedSlides = presentation.slides.map((s: any) => ({
     _id: s.id,

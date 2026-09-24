@@ -49,6 +49,7 @@ function getClient(): Redis | null {
 }
 
 const liveStateKey = (sessionId: string) => `pollwave:live_state:${sessionId}`;
+const lobbyStateKey = (sessionId: string) => `pollwave:lobby_state:${sessionId}`;
 
 export async function readLiveState(sessionId: string): Promise<LiveStateSnapshot | null> {
   const redis = getClient();
@@ -60,6 +61,32 @@ export async function readLiveState(sessionId: string): Promise<LiveStateSnapsho
     return JSON.parse(raw) as LiveStateSnapshot;
   } catch (err: any) {
     console.error('[LiveState] Failed to read snapshot:', err.message);
+    return null;
+  }
+}
+
+export interface LobbyStateSnapshot {
+  participants: Array<{ token: string; nickname: string; avatar: string }>;
+  count: number;
+  updatedAt: number;
+}
+
+/**
+ * Reads the online-filtered lobby roster the socket server mirrors into
+ * Redis (apps/server/src/socket/game/liveState.ts). This is the real,
+ * currently-connected headcount — unlike this route's own in-memory join
+ * log, which never removes anyone who leaves/disconnects.
+ */
+export async function readLobbyState(sessionId: string): Promise<LobbyStateSnapshot | null> {
+  const redis = getClient();
+  if (!redis) return null;
+
+  try {
+    const raw = await redis.get(lobbyStateKey(sessionId));
+    if (!raw) return null;
+    return JSON.parse(raw) as LobbyStateSnapshot;
+  } catch (err: any) {
+    console.error('[LiveState] Failed to read lobby snapshot:', err.message);
     return null;
   }
 }

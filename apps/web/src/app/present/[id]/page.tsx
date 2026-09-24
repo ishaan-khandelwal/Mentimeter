@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo, useRef } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { getSocket } from '@/lib/socket';
 import Link from 'next/link';
@@ -87,12 +87,6 @@ export default function PresenterLivePage() {
   const [lobbyParticipants, setLobbyParticipants] = useState<
     Array<{ token: string; nickname: string; avatar: string }>
   >([]);
-  // Ref mirror so socket handlers registered once at mount always see the
-  // latest lobby size instead of the stale (usually empty) value from mount.
-  const lobbyParticipantsRef = useRef(lobbyParticipants);
-  useEffect(() => {
-    lobbyParticipantsRef.current = lobbyParticipants;
-  }, [lobbyParticipants]);
   const [countdownNumber, setCountdownNumber] = useState<number>(3);
   const [timerState, setTimerState] = useState<QuestionTimerState | null>(null);
   const [remainingTime, setRemainingTime] = useState<number>(20);
@@ -289,7 +283,10 @@ export default function PresenterLivePage() {
         questionStartedAt: prev?.questionStartedAt || Date.now(),
         durationSeconds: prev?.durationSeconds || 20,
         answeredCount: data.answeredCount,
-        totalParticipants: Math.max(data.totalParticipants, lobbyParticipantsRef.current.length, 1),
+        // Trust the server's online-filtered count directly — inflating it
+        // against the locally-cached lobby list let stale/offline entries
+        // push the denominator above the real number of connected players.
+        totalParticipants: Math.max(data.totalParticipants, 1),
       }));
     };
 
@@ -344,21 +341,12 @@ export default function PresenterLivePage() {
         if (res.ok && isMounted) {
           const data = await res.json();
           if (data.participants && Array.isArray(data.participants)) {
-            setLobbyParticipants((prev) => {
-              const merged = [...prev];
-              data.participants.forEach((p: any) => {
-                const exists = merged.some(
-                  (m) => (p.token && m.token === p.token) || (m.nickname && m.nickname.toLowerCase() === p.nickname.toLowerCase())
-                );
-                if (!exists) {
-                  merged.push(p);
-                }
-              });
-              return merged;
-            });
-            if (data.count) {
-              setPresenceCount((prev) => Math.max(prev, data.count));
-            }
+            // Replace, don't merge — this route now reflects the real,
+            // currently-connected roster (mirrored from the socket server's
+            // online-filtered list), so a stale local entry that's no longer
+            // in the server's response means that participant actually left.
+            setLobbyParticipants(data.participants);
+            setPresenceCount(data.count ?? data.participants.length);
           }
         }
       } catch {}
@@ -397,8 +385,8 @@ export default function PresenterLivePage() {
               slideId: activeSlide._id,
               questionStartedAt: prev?.questionStartedAt || Date.now(),
               durationSeconds: prev?.durationSeconds || 20,
-              answeredCount: Math.max(prev?.answeredCount || 0, count),
-              totalParticipants: Math.max(prev?.totalParticipants || 0, lobbyParticipants.length, 1),
+              answeredCount: count,
+              totalParticipants: Math.max(lobbyParticipants.length, 1),
             }));
           }
         }

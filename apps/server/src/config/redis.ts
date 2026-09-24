@@ -78,4 +78,11 @@ export const keys = {
    * loop instead of only ever seeing the very first QUESTION_ACTIVE state.
    */
   liveState: (sessionId: string) => `pollwave:live_state:${sessionId}`,
+
+  /**
+   * Online-filtered lobby roster snapshot, shared with the Next.js REST
+   * fallback (a separate process) so it reflects who's actually still
+   * connected instead of its own never-cleaned join log.
+   */
+  lobbyState: (sessionId: string) => `pollwave:lobby_state:${sessionId}`,
 };

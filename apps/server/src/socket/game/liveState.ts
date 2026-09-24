@@ -45,3 +45,26 @@ export async function clearLiveState(sessionId: string): Promise<void> {
     console.error('[LiveState] Failed to clear snapshot:', err.message);
   }
 }
+
+export interface LobbyStateSnapshot {
+  participants: Array<{ token: string; nickname: string; avatar: string }>;
+  count: number;
+  updatedAt: number;
+}
+
+/**
+ * Mirrors gameManager's online-filtered participant roster into Redis so the
+ * Next.js REST fallback shows the real, currently-connected headcount instead
+ * of its own never-cleaned in-memory join log (which only ever grows).
+ */
+export async function publishLobbyState(
+  sessionId: string,
+  snapshot: Omit<LobbyStateSnapshot, 'updatedAt'>,
+): Promise<void> {
+  const payload: LobbyStateSnapshot = { ...snapshot, updatedAt: Date.now() };
+  try {
+    await redis.set(keys.lobbyState(sessionId), JSON.stringify(payload), 'EX', LIVE_STATE_TTL_SECONDS);
+  } catch (err: any) {
+    console.error('[LiveState] Failed to publish lobby snapshot:', err.message);
+  }
+}

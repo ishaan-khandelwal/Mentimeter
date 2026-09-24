@@ -576,12 +576,17 @@ export class GameManager {
     const session = this.sessions.get(sessionId);
     if (!session || !session.currentSlideId) return null;
 
+    // Match recordAnswer's denominator: only currently-connected participants,
+    // not everyone who has ever joined (offline stragglers would otherwise
+    // inflate the total and make "answered / total" nonsensical).
+    const totalParticipants = Array.from(session.participants.values()).filter((p) => p.online).length;
+
     return {
       slideId: session.currentSlideId,
       questionStartedAt: session.questionStartedAt,
       durationSeconds: session.durationSeconds,
       answeredCount: session.answeredParticipants.size,
-      totalParticipants: session.participants.size,
+      totalParticipants,
     };
   }
 
