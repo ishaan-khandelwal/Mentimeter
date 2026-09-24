@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import Anthropic from '@anthropic-ai/sdk';
-import { generateWithGemini, getGeminiApiKey } from '@/lib/gemini';
+import { generateWithAi, hasAnyAiProvider } from '@/lib/aiProvider';
 import { z } from 'zod';
 
 const AiQuestionsSchema = z.object({
@@ -80,32 +79,14 @@ export async function POST(req: Request) {
   const { topic, count, difficulty } = parsed.data;
   const { systemPrompt, userPrompt } = buildPrompts(topic, count, difficulty);
 
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  const hasAnthropic = !!anthropicKey && anthropicKey !== 'your-anthropic-api-key';
-  const hasGemini = !!getGeminiApiKey();
-
-  // Prefer Gemini (free tier) when configured, fall back to Anthropic, then static templates.
-  if (!hasGemini && !hasAnthropic) {
+  // Tries Gemini -> Groq -> Anthropic (whichever are configured), falling through
+  // on failure. Falls back to static templates if none are configured at all.
+  if (!hasAnyAiProvider()) {
     return NextResponse.json({ slides: buildFallbackSlides(topic, count, difficulty) });
   }
 
   try {
-    let textContent = '';
-
-    if (hasGemini) {
-      textContent = await generateWithGemini({ systemPrompt, userPrompt, maxOutputTokens: 4096 });
-    } else {
-      const anthropic = new Anthropic({ apiKey: anthropicKey });
-      const response = await anthropic.messages.create({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 4096,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }],
-      });
-      const firstContent = response.content[0];
-      textContent = firstContent.type === 'text' ? firstContent.text : '';
-    }
-
+    const textContent = await generateWithAi({ systemPrompt, userPrompt, maxOutputTokens: 4096 });
     const slides = extractSlidesJson(textContent);
     return NextResponse.json({ slides });
   } catch (err: any) {
