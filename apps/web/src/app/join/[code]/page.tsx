@@ -103,18 +103,6 @@ export default function AttendeeVotingPage() {
     currentSlideIdRef.current = currentSlideId;
   }, [currentSlideId]);
 
-  // Pre-fill from a previous visit as a convenience only — the participant
-  // must still explicitly confirm on the picker screen below (STEP 1) before
-  // joining; we never auto-generate a name/avatar or silently skip the picker.
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const savedNick = localStorage.getItem('pollwave_nickname');
-    const savedAvatar = localStorage.getItem('pollwave_avatar');
-
-    if (savedNick) setNickname(savedNick);
-    if (savedAvatar) setAvatar(savedAvatar);
-  }, []);
-
   const activeSlide = slides.find((s) => s._id === currentSlideId) || null;
 
   // Initialize ranking options when active slide changes
@@ -138,40 +126,15 @@ export default function AttendeeVotingPage() {
     }
 
     const onConnect = () => {
-      // Fetch slides/session state in the background regardless of whether this
-      // visitor has picked a name yet — but only auto-register them as a visible
-      // lobby participant if we already know who they are (a returning visitor
-      // with a saved nickname). First-time visitors must submit the picker
-      // screen (handleJoinLobby) before they're registered / shown to the
-      // presenter — never auto-registered with a fabricated identity.
-      const savedNick = localStorage.getItem('pollwave_nickname');
-      const savedAvatar = localStorage.getItem('pollwave_avatar');
-
+      // Fetch slides/session state in the background so the rest of the page
+      // has data to work with — but NEVER auto-register this socket as a
+      // lobby participant here. Registering (join_lobby) is what flips the
+      // picker screen away, so it must only ever happen from an explicit tap
+      // of "Join Quiz Sprint" in handleJoinLobby below, every single time.
       socket.emit('join_session', {
         joinCode: code,
         participantToken,
-        ...(savedNick ? { nickname: savedNick, avatar: savedAvatar || '🦊' } : {}),
       });
-
-      if (savedNick) {
-        socket.emit('join_lobby', {
-          joinCode: code,
-          participantToken,
-          nickname: savedNick,
-          avatar: savedAvatar || '🦊',
-        });
-
-        // Also persist to lobby via REST API for serverless/Vercel environments
-        fetch(`/api/v1/presentations/${code}/lobby`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            participantToken,
-            nickname: savedNick,
-            avatar: savedAvatar || '🦊',
-          }),
-        }).catch(() => {});
-      }
     };
 
     const onSessionJoined = (data: {
@@ -324,27 +287,12 @@ export default function AttendeeVotingPage() {
     let isMounted = true;
 
     // Immediate fetch to guarantee initial connection without getting stuck on "Joining Session..."
+    // Read-only: this never registers the participant. Registering (POSTing to
+    // /lobby) only ever happens from an explicit tap of "Join Quiz Sprint" in
+    // handleJoinLobby, so the picker screen is never silently skipped.
     const syncLobby = async () => {
       try {
-        // Only register a returning visitor with a saved identity via this REST
-        // fallback — never a fabricated one. First-time visitors register via
-        // handleJoinLobby once they submit the picker screen.
-        const savedNick = localStorage.getItem('pollwave_nickname');
-        const savedAvatar = localStorage.getItem('pollwave_avatar');
-
-        if (savedNick) {
-          await fetch(`/api/v1/presentations/${code}/lobby`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              participantToken,
-              nickname: savedNick,
-              avatar: savedAvatar || '🦊',
-            }),
-          }).catch(() => {});
-        }
-
-        // 2. Fetch lobby & slide details
+        // Fetch lobby & slide details
         const res = await fetch(`/api/v1/presentations/${code}/lobby`);
         if (res.ok && isMounted) {
           const data = await res.json();
@@ -463,8 +411,6 @@ export default function AttendeeVotingPage() {
     if (!nickname.trim() || !avatar) return;
 
     const cleanNick = nickname.trim().slice(0, 20);
-    localStorage.setItem('pollwave_nickname', cleanNick);
-    localStorage.setItem('pollwave_avatar', avatar);
 
     const socket = getSocket();
     socket.emit('join_lobby', {
