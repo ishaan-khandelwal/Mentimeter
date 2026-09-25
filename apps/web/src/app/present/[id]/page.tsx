@@ -434,18 +434,6 @@ export default function PresenterLivePage() {
   }, [gameState]);
 
   // Slide controls
-  const handleNextSlide = () => {
-    if (!sessionId) return;
-    const socket = getSocket();
-    socket.emit('next_slide', { sessionId });
-  };
-
-  const handlePrevSlide = () => {
-    if (!sessionId) return;
-    const socket = getSocket();
-    socket.emit('prev_slide', { sessionId });
-  };
-
   const handleGoToSlide = (slideId: string) => {
     if (!sessionId) return;
     const socket = getSocket();
@@ -1774,29 +1762,9 @@ export default function PresenterLivePage() {
             boxShadow: '0 12px 32px rgba(63, 41, 64, 0.5)',
           }}
         >
-        <button
-          onClick={handlePrevSlide}
-          disabled={currentIndex <= 0}
-          className="btn btn--ghost btn--sm"
-          title="Previous Slide (←)"
-          style={{ borderRadius: '50%', width: 36, height: 36, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-        >
-          ←
-        </button>
-
         <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-text-secondary)', padding: '0 4px' }}>
-          {currentIndex + 1} / {slides.length}
+          Question {currentIndex + 1} / {slides.length}
         </span>
-
-        <button
-          onClick={handleNextSlide}
-          disabled={currentIndex >= slides.length - 1}
-          className="btn btn--ghost btn--sm"
-          title="Next Slide (→)"
-          style={{ borderRadius: '50%', width: 36, height: 36, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-        >
-          →
-        </button>
 
         <div style={{ width: 1, height: 20, background: 'rgba(92, 54, 73, 0.14)' }} />
 

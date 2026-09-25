@@ -58,6 +58,28 @@ const socketSessions = new Map<
   { sessionId: string; presentationId: string; participantToken: string; isPresenter: boolean }
 >();
 
+// Persists which attendee (nickname/avatar) a hashed participant token belongs
+// to, so post-session analytics can show who gave which answer. Best-effort —
+// never blocks or fails the join on a write error.
+function persistParticipantIdentity(
+  presentationId: string,
+  sessionId: string,
+  rawToken: string,
+  nickname: string,
+  avatar: string,
+): void {
+  const participantToken = hashToken(rawToken);
+  prisma.participant
+    .upsert({
+      where: { sessionId_participantToken: { sessionId, participantToken } },
+      update: { nickname, avatar },
+      create: { presentationId, sessionId, participantToken, nickname, avatar },
+    })
+    .catch((err: any) => {
+      console.error('[Socket] Failed to persist participant identity:', err.message);
+    });
+}
+
 // Presenter disconnect grace timers
 const presenterGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -141,13 +163,16 @@ export function registerSocketHandlers(io: IOServer): void {
         // Auto-register attendee into gameManager lobby if nickname is provided
         let lobbyData = gameManager.getLobbyList(sessionId);
         if ((payload as any).nickname) {
+          const nickname = (payload as any).nickname;
+          const avatar = (payload as any).avatar || '🦊';
           lobbyData = gameManager.joinLobby(sessionId, presentationId, {
             token: participantToken,
-            nickname: (payload as any).nickname,
-            avatar: (payload as any).avatar || '🦊',
+            nickname,
+            avatar,
           });
           io.to(`session:${sessionId}`).emit('lobby_update', lobbyData);
           publishLobbyState(sessionId, lobbyData);
+          persistParticipantIdentity(presentationId, sessionId, participantToken, nickname, avatar);
         }
 
         // Send current session state to new attendee
@@ -437,6 +462,7 @@ export function registerSocketHandlers(io: IOServer): void {
         // Broadcast to presenter & everyone in room
         io.to(`session:${sessionId}`).emit('lobby_update', lobbyData);
         publishLobbyState(sessionId, lobbyData);
+        persistParticipantIdentity(presentation.id, sessionId, participantToken, nickname, avatar);
 
         const currentGameState = gameManager.getSession(sessionId);
         socket.emit('lobby_joined', {

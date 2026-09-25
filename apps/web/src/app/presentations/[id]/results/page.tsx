@@ -4,6 +4,13 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 
+interface Respondent {
+  nickname: string;
+  avatar: string;
+  value: any;
+  submittedAt: string;
+}
+
 interface SlideResult {
   id: string;
   order: number;
@@ -15,6 +22,18 @@ interface SlideResult {
   textAnswers: string[];
   numericValues: number[];
   average: number | null;
+  respondents: Respondent[];
+}
+
+function formatAnswerValue(value: any): string {
+  if (value === null || value === undefined) return '—';
+  if (Array.isArray(value)) return value.join(', ');
+  if (typeof value === 'object') {
+    return Object.entries(value)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(', ');
+  }
+  return String(value);
 }
 
 interface ResultsData {
@@ -337,6 +356,60 @@ export default function PresentationResultsPage() {
                   )}
                 </div>
               )}
+
+              {/* Who Answered — individual respondent breakdown */}
+              <div style={{ marginTop: '32px', paddingTop: '24px', borderTop: '1px solid rgba(92, 54, 73, 0.1)' }}>
+                <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '14px', color: 'var(--color-text-secondary)' }}>
+                  Who Answered ({activeSlide.respondents.length})
+                </h3>
+                {activeSlide.respondents.length === 0 ? (
+                  <p style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>No individual responses recorded for this question yet.</p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '360px', overflowY: 'auto' }}>
+                    {activeSlide.respondents.map((r, idx) => (
+                      <div
+                        key={idx}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '12px',
+                          padding: '10px 14px',
+                          borderRadius: '10px',
+                          background: 'rgba(92, 54, 73, 0.04)',
+                          border: '1px solid rgba(92, 54, 73, 0.08)',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                          <span style={{ fontSize: '1.3rem' }}>{r.avatar}</span>
+                          <span style={{ fontWeight: 700, fontSize: '0.92rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {r.nickname}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0 }}>
+                          <span
+                            style={{
+                              fontSize: '0.9rem',
+                              fontWeight: 600,
+                              color: '#9c4f73',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              maxWidth: '320px',
+                            }}
+                            title={formatAnswerValue(r.value)}
+                          >
+                            {formatAnswerValue(r.value)}
+                          </span>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>
+                            {new Date(r.submittedAt).toLocaleTimeString()}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

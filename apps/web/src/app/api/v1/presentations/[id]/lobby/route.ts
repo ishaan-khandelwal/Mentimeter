@@ -198,6 +198,21 @@ export async function POST(req: Request, { params }: RouteParams) {
     });
   }
 
+  // Persist who this hashed token belongs to, so analytics can later show
+  // which attendee gave which answer. Best-effort — never blocks the join.
+  prisma.participant
+    .upsert({
+      where: { sessionId_participantToken: { sessionId: session.id, participantToken: hashedToken } },
+      update: { nickname: cleanNick, avatar: cleanAvatar },
+      create: {
+        presentationId: presentation.id,
+        sessionId: session.id,
+        participantToken: hashedToken,
+        nickname: cleanNick,
+        avatar: cleanAvatar,
+      },
+    })
+    .catch((err) => console.error('[Lobby] Failed to persist participant identity:', err));
 
   const allInPres = Array.from(lobbyState.participants.values());
 

@@ -34,10 +34,22 @@ export async function GET(req: Request, { params }: RouteParams) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
+  // Who each hashed participantToken belongs to (nickname/avatar are only
+  // ever sent at join time, never with individual votes), keyed per-session
+  // since the same browser token can rejoin under a different nickname.
+  const participants = await prisma.participant.findMany({
+    where: { presentationId: presentation.id },
+  });
+  const participantMap = new Map(
+    participants.map((p) => [`${p.sessionId}:${p.participantToken}`, { nickname: p.nickname, avatar: p.avatar }])
+  );
+  const getRespondent = (sessionId: string, participantToken: string) =>
+    participantMap.get(`${sessionId}:${participantToken}`) || { nickname: 'Anonymous', avatar: '❓' };
+
   // Handle CSV export
   if (format === 'csv') {
     const rows = [
-      ['Response ID', 'Slide Order', 'Slide Type', 'Question', 'Response Value', 'Submitted At'],
+      ['Response ID', 'Slide Order', 'Slide Type', 'Question', 'Respondent', 'Response Value', 'Submitted At'],
     ];
 
     for (const r of presentation.responses) {
@@ -48,11 +60,14 @@ export async function GET(req: Request, { params }: RouteParams) {
         valStr = String(r.value ?? '');
       }
 
+      const respondent = getRespondent(r.sessionId, r.participantToken);
+
       rows.push([
         r.id,
         String(r.slide.order + 1),
         r.slide.type,
         `"${r.slide.question.replace(/"/g, '""')}"`,
+        `"${respondent.nickname.replace(/"/g, '""')}"`,
         `"${valStr.replace(/"/g, '""')}"`,
         r.createdAt.toISOString(),
       ]);
@@ -119,6 +134,19 @@ export async function GET(req: Request, { params }: RouteParams) {
       ? numericValues.reduce((a, b) => a + b, 0) / numericValues.length
       : null;
 
+    // Individual respondent breakdown — who gave which answer, and when.
+    const respondents = slideResponses
+      .map((r) => {
+        const { nickname, avatar } = getRespondent(r.sessionId, r.participantToken);
+        return {
+          nickname,
+          avatar,
+          value: r.value,
+          submittedAt: r.createdAt.toISOString(),
+        };
+      })
+      .sort((a, b) => a.submittedAt.localeCompare(b.submittedAt));
+
     return {
       id: slide.id,
       _id: slide.id,
@@ -130,6 +158,7 @@ export async function GET(req: Request, { params }: RouteParams) {
       timerSeconds: slide.timerSeconds,
       maxVotes: slide.maxVotes,
       responseCount: slideResponses.length,
+      respondents,
       tally,
       textAnswers,
       numericValues,

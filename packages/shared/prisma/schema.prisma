@@ -36,6 +36,7 @@ model Presentation {
   sessions     Session[]
   responses    Response[]
   analytics    Analytics[]
+  participants Participant[]
 
   @@index([ownerId])
   @@index([joinCode])
@@ -75,6 +76,7 @@ model Session {
   endedAt        DateTime?
   responses      Response[]
   analytics      Analytics[]
+  participants   Participant[]
 
   @@index([presentationId, status])
   @@map("sessions")
@@ -96,6 +98,26 @@ model Response {
   @@index([sessionId])
   @@index([presentationId])
   @@map("responses")
+}
+
+// Identifies who a hashed Response.participantToken belongs to, so analytics
+// can show which attendee gave which answer (nickname/avatar are chosen at
+// join time and never sent with individual votes).
+model Participant {
+  id               String       @id @default(cuid())
+  presentationId   String
+  presentation     Presentation @relation(fields: [presentationId], references: [id], onDelete: Cascade)
+  sessionId        String
+  session          Session      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  participantToken String // sha256 hash of participant token, matches Response.participantToken
+  nickname         String
+  avatar           String
+  joinedAt         DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@unique([sessionId, participantToken])
+  @@index([presentationId])
+  @@map("participants")
 }
 
 model Analytics {
