@@ -62,6 +62,13 @@ export default function PresentationEditorPage() {
   const [aiGenerating, setAiGenerating] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
+  // Bulk MCQ Import Modal states
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importParsed, setImportParsed] = useState<{ question: string; options: string[]; correctAnswer: string | null }[]>([]);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importLoading, setImportLoading] = useState(false);
+
   // Create Question Modal states
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createType, setCreateType] = useState<SlideType>('multiple_choice');
@@ -565,6 +572,104 @@ export default function PresentationEditorPage() {
     }
   };
 
+  // Parse pasted MCQ text into structured question objects
+  const parseMcqText = (text: string): { question: string; options: string[]; correctAnswer: string | null }[] => {
+    const results: { question: string; options: string[]; correctAnswer: string | null }[] = [];
+    // Split by blank lines or numbered question patterns
+    const blocks = text.split(/\n(?=\s*\d+[.)\s])/).map((b) => b.trim()).filter(Boolean);
+
+    for (const block of blocks) {
+      const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
+      if (lines.length < 2) continue;
+
+      // First non-empty line (strip leading number+dot/paren)
+      let questionLine = lines[0].replace(/^\d+[.)\s]+/, '').trim();
+      const options: string[] = [];
+      let correctAnswer: string | null = null;
+
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        // Detect answer marker
+        const answerMatch = line.match(/^(?:answer|correct|ans)[:\s]+([A-Da-d])/i);
+        if (answerMatch) {
+          const letter = answerMatch[1].toUpperCase();
+          const idx = letter.charCodeAt(0) - 65;
+          if (options[idx]) correctAnswer = options[idx];
+          continue;
+        }
+        // Detect option lines: A) B) C) D) or A. B. C. D.
+        const optMatch = line.match(/^([A-Da-d])[.)\s]+(.+)/);
+        if (optMatch) {
+          options.push(optMatch[2].trim());
+          continue;
+        }
+        // If no letter prefix but we still have lines, they could be continuation of question
+        if (options.length === 0) {
+          questionLine += ' ' + line;
+        }
+      }
+
+      if (questionLine && options.length >= 2) {
+        results.push({ question: questionLine, options, correctAnswer });
+      }
+    }
+    return results;
+  };
+
+  const handleParseImport = () => {
+    setImportError(null);
+    if (!importText.trim()) {
+      setImportError('Please paste your MCQ questions first.');
+      return;
+    }
+    const parsed = parseMcqText(importText);
+    if (parsed.length === 0) {
+      setImportError(
+        'Could not detect any valid MCQ questions. Make sure each question has at least 2 options labeled A), B), C)... (see example format below).'
+      );
+      return;
+    }
+    setImportParsed(parsed);
+  };
+
+  const handleConfirmImport = async () => {
+    if (importParsed.length === 0) return;
+    setImportLoading(true);
+    setImportError(null);
+    let addedCount = 0;
+    try {
+      for (const item of importParsed) {
+        const res = await fetch(`/api/v1/presentations/${id}/slides`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'multiple_choice',
+            question: item.question,
+            options: item.options,
+            config: {
+              allowMultiple: false,
+              durationSeconds: 20,
+              ...(item.correctAnswer ? { correctAnswer: item.correctAnswer } : {}),
+            },
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSlides((prev) => [...prev, data.slide]);
+          addedCount++;
+        }
+      }
+      setShowImportModal(false);
+      setImportText('');
+      setImportParsed([]);
+      setActiveSlideIndex((prev) => prev + addedCount - 1);
+    } catch (err: any) {
+      setImportError(err?.message || 'Failed to import questions.');
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="container" style={{ padding: '80px 24px', textAlign: 'center' }}>
@@ -665,6 +770,19 @@ export default function PresentationEditorPage() {
             title="Toggle live presentation canvas preview"
           >
             {editorMode === 'preview' ? '✏ Edit Mode' : '👁 Preview'}
+          </button>
+
+          <button
+            onClick={() => {
+              setShowImportModal(true);
+              setImportText('');
+              setImportParsed([]);
+              setImportError(null);
+            }}
+            className="btn btn--ghost btn--sm"
+            title="Paste and import your own MCQ questions in bulk"
+          >
+            📋 Bulk Import
           </button>
 
           <button
@@ -2361,6 +2479,230 @@ export default function PresentationEditorPage() {
                 {createCreating ? 'Creating Question...' : '✓ Create Question'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk MCQ Import Modal */}
+      {showImportModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(63,41,64,0.82)',
+            backdropFilter: 'blur(10px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '16px',
+          }}
+          onClick={() => { setShowImportModal(false); setImportParsed([]); }}
+        >
+          <div
+            className="card"
+            style={{
+              width: '100%',
+              maxWidth: '720px',
+              maxHeight: '92vh',
+              overflowY: 'auto',
+              padding: '32px',
+              borderRadius: '18px',
+              border: '1px solid rgba(92,54,73,0.22)',
+              boxShadow: '0 24px 70px rgba(63,41,64,0.65)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span style={{ fontSize: '1.8rem' }}>📋</span>
+                <div>
+                  <h2 style={{ fontSize: '1.35rem', margin: 0, fontWeight: 800 }}>Bulk MCQ Import</h2>
+                  <p style={{ margin: '4px 0 0', fontSize: '0.84rem', color: 'var(--color-text-secondary)' }}>
+                    Paste your own multiple-choice questions and import them all at once.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setShowImportModal(false); setImportParsed([]); }}
+                className="btn btn--ghost btn--sm"
+                style={{ fontSize: '1.1rem', padding: '4px 8px' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Format hint */}
+            <div
+              style={{
+                background: 'rgba(92,54,73,0.06)',
+                border: '1px solid rgba(92,54,73,0.14)',
+                borderRadius: '10px',
+                padding: '14px 16px',
+                marginBottom: '20px',
+                marginTop: '16px',
+              }}
+            >
+              <p style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--color-text-secondary)', marginBottom: '6px' }}>📌 Supported Format</p>
+              <pre
+                style={{
+                  fontSize: '0.78rem',
+                  color: 'var(--color-text-muted)',
+                  lineHeight: 1.6,
+                  margin: 0,
+                  fontFamily: 'monospace',
+                  whiteSpace: 'pre-wrap',
+                }}
+              >{`1. Which planet is closest to the Sun?
+A) Venus
+B) Mercury
+C) Earth
+D) Mars
+Answer: B
+
+2. What is the chemical symbol for water?
+A) H2O
+B) CO2
+C) O2
+D) NaCl
+Answer: A`}</pre>
+              <p style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginTop: '8px', marginBottom: 0 }}>
+                ✅ Questions should be numbered. Options must be labeled <strong>A)</strong>, <strong>B)</strong>, <strong>C)</strong>… Use <strong>Answer: B</strong> or <strong>Correct: B</strong> to mark the correct option (optional).
+              </p>
+            </div>
+
+            {importError && (
+              <div className="auth-alert auth-alert--error" style={{ marginBottom: '16px' }}>
+                <span>⚠️</span>
+                <span>{importError}</span>
+              </div>
+            )}
+
+            {/* Paste area — shown before parsing */}
+            {importParsed.length === 0 && (
+              <>
+                <div className="form-group" style={{ marginBottom: '16px' }}>
+                  <label className="form-label" style={{ marginBottom: '8px', display: 'block' }}>Paste Your MCQs Here</label>
+                  <textarea
+                    rows={12}
+                    value={importText}
+                    onChange={(e) => { setImportText(e.target.value); setImportError(null); }}
+                    placeholder={`1. Which planet is closest to the Sun?\nA) Venus\nB) Mercury\nC) Earth\nD) Mars\nAnswer: B\n\n2. What is 2+2?\nA) 3\nB) 4\nC) 5\nD) 6\nAnswer: B`}
+                    className="form-textarea"
+                    style={{ fontFamily: 'monospace', fontSize: '0.88rem', lineHeight: 1.65, resize: 'vertical' }}
+                    autoFocus
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                  <button
+                    type="button"
+                    onClick={() => { setShowImportModal(false); setImportParsed([]); }}
+                    className="btn btn--ghost"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleParseImport}
+                    className="btn btn--primary"
+                    disabled={!importText.trim()}
+                  >
+                    🔍 Preview Questions
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* Preview parsed questions */}
+            {importParsed.length > 0 && (
+              <>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: '14px',
+                  }}
+                >
+                  <p style={{ fontWeight: 700, fontSize: '0.95rem', margin: 0 }}>
+                    ✅ Detected <span style={{ color: '#2f8f6b' }}>{importParsed.length}</span> question{importParsed.length !== 1 ? 's' : ''} — review before importing:
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => { setImportParsed([]); setImportError(null); }}
+                    className="btn btn--ghost btn--sm"
+                    style={{ fontSize: '0.8rem' }}
+                  >
+                    ← Edit Text
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px', maxHeight: '340px', overflowY: 'auto', paddingRight: '4px' }}>
+                  {importParsed.map((item, qi) => (
+                    <div
+                      key={qi}
+                      style={{
+                        padding: '14px 16px',
+                        borderRadius: '10px',
+                        background: 'rgba(92,54,73,0.05)',
+                        border: '1px solid rgba(92,54,73,0.12)',
+                      }}
+                    >
+                      <div style={{ fontWeight: 700, fontSize: '0.92rem', marginBottom: '8px', color: 'var(--color-text-primary)' }}>
+                        <span style={{ color: '#d95745', marginRight: '6px' }}>Q{qi + 1}.</span>
+                        {item.question}
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {item.options.map((opt, oi) => (
+                          <span
+                            key={oi}
+                            style={{
+                              padding: '4px 10px',
+                              borderRadius: '6px',
+                              fontSize: '0.82rem',
+                              fontWeight: opt === item.correctAnswer ? 700 : 500,
+                              background: opt === item.correctAnswer ? 'rgba(34,197,94,0.15)' : 'rgba(92,54,73,0.07)',
+                              border: opt === item.correctAnswer ? '1.5px solid #3f9a73' : '1px solid rgba(92,54,73,0.15)',
+                              color: opt === item.correctAnswer ? '#2f8f6b' : 'var(--color-text-secondary)',
+                            }}
+                          >
+                            {String.fromCharCode(65 + oi)}) {opt}{opt === item.correctAnswer ? ' ✓' : ''}
+                          </span>
+                        ))}
+                      </div>
+                      {!item.correctAnswer && (
+                        <p style={{ fontSize: '0.76rem', color: 'var(--color-text-muted)', margin: '6px 0 0' }}>⚪ No correct answer marked (survey mode)</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                  <button
+                    type="button"
+                    onClick={() => { setShowImportModal(false); setImportParsed([]); }}
+                    className="btn btn--ghost"
+                    disabled={importLoading}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmImport}
+                    className="btn btn--primary"
+                    disabled={importLoading}
+                    style={{ minWidth: '160px' }}
+                  >
+                    {importLoading
+                      ? `Importing... (${importParsed.length})`
+                      : `📥 Import ${importParsed.length} Question${importParsed.length !== 1 ? 's' : ''}`}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
